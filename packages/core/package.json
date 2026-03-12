@@ -21,10 +21,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "hono": "^4.0.0",
     "zod": "^3.23.0"
   },
+  "peerDependencies": {
+    "hono": "^4.0.0"
+  },
   "devDependencies": {
+    "hono": "^4.12.7",
     "vitest": "^3.0.0"
   }
 }

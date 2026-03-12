@@ -4,15 +4,8 @@ import { IDENTITY_KEY } from "../constants.js"
 export function bodyLimit(maxBytes: number): MiddlewareHandler {
   return async (c, next) => {
     const contentLength = c.req.header("content-length")
-    if (contentLength) {
-      if (parseInt(contentLength, 10) > maxBytes) {
-        return c.json({ error: "Payload too large" }, 413)
-      }
-    } else if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-      const body = await c.req.text()
-      if (body.length > maxBytes) {
-        return c.json({ error: "Payload too large" }, 413)
-      }
+    if (contentLength && parseInt(contentLength, 10) > maxBytes) {
+      return c.json({ error: "Payload too large" }, 413)
     }
     await next()
   }

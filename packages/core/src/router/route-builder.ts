@@ -214,10 +214,11 @@ function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRout
   // Push route
   if (!col.pullOnly) {
     const pushPath = toRoutePath(ACTION_PUSH, col.storagePath)
-    const middlewares: MiddlewareHandler[] = [bodyLimit(col.maxBodyBytes)]
+    const middlewares: MiddlewareHandler[] = []
 
     const authMw = buildAuthMiddleware(col, OP_WRITE, opts)
     if (authMw) middlewares.push(authMw)
+    middlewares.push(bodyLimit(col.maxBodyBytes))
     if (col.rateLimit && opts.config.rateLimit) {
       middlewares.push(rateLimitMiddleware(opts.config.rateLimit))
     }
@@ -289,9 +290,10 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
     if (col.pullOnly) continue
 
     const pushPath = toRoutePath(ACTION_PUSH, storagePath) + `/${col.name}`
-    const middlewares: MiddlewareHandler[] = [bodyLimit(col.maxBodyBytes)]
+    const middlewares: MiddlewareHandler[] = []
     const authMw = buildAuthMiddleware(col, OP_WRITE, opts)
     if (authMw) middlewares.push(authMw)
+    middlewares.push(bodyLimit(col.maxBodyBytes))
     if (col.rateLimit && opts.config.rateLimit) {
       middlewares.push(rateLimitMiddleware(opts.config.rateLimit))
     }
