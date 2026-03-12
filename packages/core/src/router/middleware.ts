@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import { IDENTITY_KEY } from "../constants.js"
 
 export function bodyLimit(maxBytes: number): MiddlewareHandler {
   return async (c, next) => {
@@ -30,7 +31,7 @@ export function rateLimitMiddleware(
   const buckets = new Map<string, BucketEntry>()
 
   return async (c, next) => {
-    const identity = c.get("identity") as string | undefined
+    const identity = c.get(IDENTITY_KEY) as string | undefined
     if (!identity) {
       await next()
       return

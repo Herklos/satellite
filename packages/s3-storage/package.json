@@ -12,10 +12,14 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@satellite/core": "workspace:*",
     "aws4fetch": "^1.0.20"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
   }
 }

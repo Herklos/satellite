@@ -3,6 +3,7 @@ import { nextTimestamp } from "../timestamp.js"
 import type { StoredDocument, PushResult } from "./types.js"
 import { computeHash } from "./hash.js"
 import { computeTimestamps } from "./timestamps.js"
+import { ERROR_HASH_MISMATCH, CONTENT_TYPE_JSON } from "../constants.js"
 
 const DOCUMENT_VERSION = 1
 
@@ -43,11 +44,11 @@ export async function push(
   if (baseHash === null) {
     // First push: document must not exist
     if (raw) {
-      return { ok: false, error: "hash_mismatch" }
+      return { ok: false, error: ERROR_HASH_MISMATCH }
     }
   } else {
     if (baseHash !== currentHash) {
-      return { ok: false, error: "hash_mismatch" }
+      return { ok: false, error: ERROR_HASH_MISMATCH }
     }
   }
 
@@ -63,7 +64,7 @@ export async function push(
     ...(author && { authorPubkey: author.pubkey, authorSignature: author.signature }),
   }
 
-  await store.put(documentKey, JSON.stringify(doc), { contentType: "application/json" })
+  await store.put(documentKey, JSON.stringify(doc), { contentType: CONTENT_TYPE_JSON })
 
   return { ok: true, hash: newHash, timestamp: now }
 }

@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 import type { IObjectStore } from "../interfaces.js"
 import { pull, push, stableStringify } from "../protocol/index.js"
+import { QUERY_CHECKPOINT, ERROR_HASH_MISMATCH, CONTENT_TYPE_JSON } from "../constants.js"
 
 /** Reject path segments with traversal, null bytes, slashes, control chars */
 const SAFE_PARAM = /^[a-zA-Z0-9._:@-]+$/
@@ -39,7 +40,7 @@ export async function handleSyncPull(
 
   let checkpoint = 0
   if (!forceFullFetch) {
-    const checkpointParam = c.req.query("checkpoint")
+    const checkpointParam = c.req.query(QUERY_CHECKPOINT)
     if (checkpointParam !== undefined) {
       const parsed = parseInt(checkpointParam, 10)
       if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== checkpointParam) {
@@ -76,8 +77,8 @@ export async function handleSyncPush(
     return c.json({ error: "Invalid path parameter" }, 400)
   }
   const contentType = c.req.header("content-type") ?? ""
-  if (!contentType.includes("application/json")) {
-    return c.json({ error: "Content-Type must be application/json" }, 415)
+  if (!contentType.includes(CONTENT_TYPE_JSON)) {
+    return c.json({ error: `Content-Type must be ${CONTENT_TYPE_JSON}` }, 415)
   }
 
   const body = await c.req.json()
@@ -116,7 +117,7 @@ export async function handleSyncPush(
   const result = await push(store, documentKey, sanitized, baseHash as string | null, author)
 
   if (!result.ok) {
-    return c.json({ error: "hash_mismatch" }, 409)
+    return c.json({ error: ERROR_HASH_MISMATCH }, 409)
   }
 
   return c.json({ hash: result.hash, timestamp: result.timestamp })

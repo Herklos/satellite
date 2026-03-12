@@ -1,0 +1,47 @@
+{
+  "stableStringify": [
+    { "input": { "b": 2, "a": 1 }, "expected": "{\"a\":1,\"b\":2}" },
+    { "input": { "z": { "b": 2, "a": 1 }, "a": 0 }, "expected": "{\"a\":0,\"z\":{\"a\":1,\"b\":2}}" },
+    { "input": [3, 1, 2], "expected": "[3,1,2]" },
+    { "input": null, "expected": "null" },
+    { "input": "hello", "expected": "\"hello\"" },
+    { "input": true, "expected": "true" },
+    { "input": {}, "expected": "{}" },
+    { "input": { "x": 1, "y": 2, "z": 3 }, "expected": "{\"x\":1,\"y\":2,\"z\":3}" },
+    { "input": { "c": { "z": { "m": 1, "a": 2 }, "b": 3 }, "a": 0 }, "expected": "{\"a\":0,\"c\":{\"b\":3,\"z\":{\"a\":2,\"m\":1}}}" },
+    { "input": { "str": "hello", "num": 42, "bool": true, "nil": null, "arr": [1, "two", false], "obj": { "nested": true } }, "expected": "{\"arr\":[1,\"two\",false],\"bool\":true,\"nil\":null,\"num\":42,\"obj\":{\"nested\":true},\"str\":\"hello\"}" },
+    { "input": [{ "z": 1, "a": 2 }, { "m": 3, "b": 4 }], "expected": "[{\"a\":2,\"z\":1},{\"b\":4,\"m\":3}]" },
+    { "input": { "a": { "b": {} }, "c": [] }, "expected": "{\"a\":{\"b\":{}},\"c\":[]}" },
+    { "input": { "emoji": "🔥", "accent": "café", "jp": "日本語" }, "expected": "{\"accent\":\"café\",\"emoji\":\"🔥\",\"jp\":\"日本語\"}" },
+    { "input": { "big": 999999999999, "pi": 3.14159, "neg": -42, "zero": 0 }, "expected": "{\"big\":999999999999,\"neg\":-42,\"pi\":3.14159,\"zero\":0}" },
+    { "input": { "d": { "c": { "b": { "a": 1 } } } }, "expected": "{\"d\":{\"c\":{\"b\":{\"a\":1}}}}" },
+    { "input": { "items": [{ "z": { "y": 1 }, "a": 2 }, null, [3, 4]] }, "expected": "{\"items\":[{\"a\":2,\"z\":{\"y\":1}},null,[3,4]]}" }
+  ],
+  "computeHash": [
+    {
+      "input": { "hello": "world" },
+      "stableJson": "{\"hello\":\"world\"}",
+      "expectedHash": "93a23971a914e5eacbf0a8d25154cda309c3c1c72fbb9914d47c60f3cb681588"
+    },
+    {
+      "input": { "b": 2, "a": 1 },
+      "stableJson": "{\"a\":1,\"b\":2}",
+      "expectedHash": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "input": { "c": { "z": { "m": 1, "a": 2 }, "b": 3 }, "a": 0 },
+      "stableJson": "{\"a\":0,\"c\":{\"b\":3,\"z\":{\"a\":2,\"m\":1}}}",
+      "expectedHash": "91e9bdc24487e1f6d0966a3af627288948f974f0c66b066ffb0918e879661465"
+    },
+    {
+      "input": { "str": "hello", "num": 42, "bool": true, "nil": null, "arr": [1, "two", false], "obj": { "nested": true } },
+      "stableJson": "{\"arr\":[1,\"two\",false],\"bool\":true,\"nil\":null,\"num\":42,\"obj\":{\"nested\":true},\"str\":\"hello\"}",
+      "expectedHash": "b7aa51d5b1e3e991e60080e1a3ee4403c80f9b3f65d186eb40e40aebfbc47f9d"
+    },
+    {
+      "input": { "d": { "c": { "b": { "a": 1 } } } },
+      "stableJson": "{\"d\":{\"c\":{\"b\":{\"a\":1}}}}",
+      "expectedHash": "6208c56886525e136f8c62d1a5a08b6960cbd6411904c5f13317a82084319c12"
+    }
+  ]
+}

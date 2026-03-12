@@ -1,4 +1,5 @@
 import type { IObjectStore } from "../interfaces.js"
+import { HKDF_INFO_DEFAULT } from "../constants.js"
 
 const ALGO = "AES-GCM"
 const IV_BYTES = 12
@@ -59,7 +60,7 @@ export class EncryptedObjectStore implements IObjectStore {
     private inner: IObjectStore,
     secret: string,
     salt: string,
-    info: string = "satellite-data"
+    info: string = HKDF_INFO_DEFAULT
   ) {
     this.keyPromise = deriveKey(secret, salt, info)
   }

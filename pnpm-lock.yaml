@@ -12,6 +12,15 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  clients/ts:
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4
+
   packages/core:
     dependencies:
       hono:
@@ -21,18 +30,9 @@ importers:
         specifier: ^3.23.0
         version: 3.25.76
     devDependencies:
-      '@satellite/memory-store':
-        specifier: workspace:*
-        version: link:../memory-store
       vitest:
         specifier: ^3.0.0
         version: 3.2.4
-
-  packages/memory-store:
-    dependencies:
-      '@satellite/core':
-        specifier: workspace:*
-        version: link:../core
 
   packages/s3-storage:
     dependencies:
@@ -42,6 +42,10 @@ importers:
       aws4fetch:
         specifier: ^1.0.20
         version: 1.0.20
+    devDependencies:
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4
 
 packages:
 

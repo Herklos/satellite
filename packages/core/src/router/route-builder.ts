@@ -7,6 +7,22 @@ import { pull } from "../protocol/index.js"
 import { handleSyncPull, handleSyncPush, validatePathSegment } from "./helpers.js"
 import type { SignatureVerifier } from "./helpers.js"
 import { bodyLimit, rateLimitMiddleware } from "./middleware.js"
+import {
+  ROLE_PUBLIC,
+  ROLE_SELF,
+  OP_READ,
+  OP_WRITE,
+  ENCRYPTION_IDENTITY,
+  ENCRYPTION_SERVER,
+  ACTION_PULL,
+  ACTION_PUSH,
+  IDENTITY_PARAM,
+  IDENTITY_KEY,
+  QUERY_CHECKPOINT,
+  HKDF_INFO_IDENTITY,
+  HKDF_INFO_SERVER,
+} from "../constants.js"
+import type { AccessOperation } from "../constants.js"
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -94,13 +110,13 @@ function compose(
  */
 function buildAuthMiddleware(
   col: CollectionConfig,
-  operation: "read" | "write",
+  operation: AccessOperation,
   opts: SyncRouterOptions,
 ): MiddlewareHandler | null {
-  const requiredRoles = operation === "read" ? col.readRoles : col.writeRoles
+  const requiredRoles = operation === OP_READ ? col.readRoles : col.writeRoles
 
   // Public access — no auth needed
-  if (requiredRoles.includes("public")) return null
+  if (requiredRoles.includes(ROLE_PUBLIC)) return null
 
   return async (c, next) => {
     let auth: AuthResult
@@ -111,15 +127,15 @@ function buildAuthMiddleware(
     }
 
     // Store identity in context for downstream use (rate limiting, encryption)
-    c.set("identity", auth.identity)
+    c.set(IDENTITY_KEY, auth.identity)
 
     const effectiveRoles = new Set(auth.roles)
 
     // Auto-grant "self" when {identity} in path matches authenticated identity
-    if (col.storagePath.includes("{identity}")) {
+    if (col.storagePath.includes(IDENTITY_PARAM)) {
       const params = c.req.param() as Record<string, string>
-      if (params["identity"] === auth.identity) {
-        effectiveRoles.add("self")
+      if (params[IDENTITY_KEY] === auth.identity) {
+        effectiveRoles.add(ROLE_SELF)
       }
     }
 
@@ -149,24 +165,24 @@ function resolveStore(
   identity: string | undefined,
   opts: SyncRouterOptions,
 ): IObjectStore {
-  if (col.encryption === "identity") {
+  if (col.encryption === ENCRYPTION_IDENTITY) {
     if (!opts.encryptionSecret) throw new Error(`Collection "${col.name}" requires encryptionSecret`)
-    const salt = identity ?? params["identity"] ?? ""
+    const salt = identity ?? params[IDENTITY_KEY] ?? ""
     return new EncryptedObjectStore(
       baseStore,
       opts.encryptionSecret,
       salt,
-      opts.identityEncryptionInfo ?? "satellite-identity-data",
+      opts.identityEncryptionInfo ?? HKDF_INFO_IDENTITY,
     )
   }
-  if (col.encryption === "server") {
+  if (col.encryption === ENCRYPTION_SERVER) {
     if (!opts.serverEncryptionSecret) throw new Error(`Collection "${col.name}" requires serverEncryptionSecret`)
     if (!opts.serverIdentity) throw new Error(`Collection "${col.name}" requires serverIdentity`)
     return new EncryptedObjectStore(
       baseStore,
       opts.serverEncryptionSecret,
       opts.serverIdentity,
-      opts.serverEncryptionInfo ?? "satellite-server-data",
+      opts.serverEncryptionInfo ?? HKDF_INFO_SERVER,
     )
   }
   return baseStore
@@ -177,8 +193,8 @@ function resolveStore(
 function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRouterOptions): void {
   // Pull route
   if (!col.pushOnly) {
-    const pullPath = toRoutePath("pull", col.storagePath)
-    const authMw = buildAuthMiddleware(col, "read", opts)
+    const pullPath = toRoutePath(ACTION_PULL, col.storagePath)
+    const authMw = buildAuthMiddleware(col, OP_READ, opts)
     const middlewares: MiddlewareHandler[] = authMw ? [authMw] : []
 
     const handler = async (c: Context) => {
@@ -187,7 +203,7 @@ function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRout
         return c.json({ error: "Invalid path parameter" }, 400)
       }
       const documentKey = resolveDocumentKey(col.storagePath, params)
-      const identity = (c.get("identity") as string | undefined)
+      const identity = (c.get(IDENTITY_KEY) as string | undefined)
       const store = resolveStore(col, opts.store, params, identity, opts)
       return handleSyncPull(c, documentKey, store, col.forceFullFetch)
     }
@@ -197,10 +213,10 @@ function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRout
 
   // Push route
   if (!col.pullOnly) {
-    const pushPath = toRoutePath("push", col.storagePath)
+    const pushPath = toRoutePath(ACTION_PUSH, col.storagePath)
     const middlewares: MiddlewareHandler[] = [bodyLimit(col.maxBodyBytes)]
 
-    const authMw = buildAuthMiddleware(col, "write", opts)
+    const authMw = buildAuthMiddleware(col, OP_WRITE, opts)
     if (authMw) middlewares.push(authMw)
     if (col.rateLimit && opts.config.rateLimit) {
       middlewares.push(rateLimitMiddleware(opts.config.rateLimit))
@@ -212,7 +228,7 @@ function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRout
         return c.json({ error: "Invalid path parameter" }, 400)
       }
       const documentKey = resolveDocumentKey(col.storagePath, params)
-      const identity = (c.get("identity") as string | undefined)
+      const identity = (c.get(IDENTITY_KEY) as string | undefined)
       const store = resolveStore(col, opts.store, params, identity, opts)
       return handleSyncPush(c, documentKey, store, identity, opts.signatureVerifier)
     }
@@ -225,9 +241,9 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
   const storagePath = collections[0]!.storagePath
 
   // Pull: combined pull for all collections in the bundle
-  const pullPath = toRoutePath("pull", storagePath)
-  const isAnyPublic = collections.some(c => c.readRoles.includes("public"))
-  const pullAuthMw = isAnyPublic ? null : buildAuthMiddleware(collections[0]!, "read", opts)
+  const pullPath = toRoutePath(ACTION_PULL, storagePath)
+  const isAnyPublic = collections.some(c => c.readRoles.includes(ROLE_PUBLIC))
+  const pullAuthMw = isAnyPublic ? null : buildAuthMiddleware(collections[0]!, OP_READ, opts)
   const pullMiddlewares: MiddlewareHandler[] = pullAuthMw ? [pullAuthMw] : []
 
   const pullHandler = async (c: Context) => {
@@ -236,10 +252,10 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
       return c.json({ error: "Invalid path parameter" }, 400)
     }
     const baseKey = resolveDocumentKey(storagePath, params)
-    const identity = (c.get("identity") as string | undefined)
+    const identity = (c.get(IDENTITY_KEY) as string | undefined)
     const store = resolveStore(collections[0]!, opts.store, params, identity, opts)
 
-    const checkpointParam = c.req.query("checkpoint")
+    const checkpointParam = c.req.query(QUERY_CHECKPOINT)
     let checkpoint = 0
     if (checkpointParam !== undefined) {
       const parsed = parseInt(checkpointParam, 10)
@@ -272,9 +288,9 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
   for (const col of collections) {
     if (col.pullOnly) continue
 
-    const pushPath = toRoutePath("push", storagePath) + `/${col.name}`
+    const pushPath = toRoutePath(ACTION_PUSH, storagePath) + `/${col.name}`
     const middlewares: MiddlewareHandler[] = [bodyLimit(col.maxBodyBytes)]
-    const authMw = buildAuthMiddleware(col, "write", opts)
+    const authMw = buildAuthMiddleware(col, OP_WRITE, opts)
     if (authMw) middlewares.push(authMw)
     if (col.rateLimit && opts.config.rateLimit) {
       middlewares.push(rateLimitMiddleware(opts.config.rateLimit))
@@ -286,7 +302,7 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
         return c.json({ error: "Invalid path parameter" }, 400)
       }
       const documentKey = `${resolveDocumentKey(storagePath, params)}/${col.name}`
-      const identity = (c.get("identity") as string | undefined)
+      const identity = (c.get(IDENTITY_KEY) as string | undefined)
       const store = resolveStore(col, opts.store, params, identity, opts)
       return handleSyncPush(c, documentKey, store, identity, opts.signatureVerifier)
     }

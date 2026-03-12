@@ -1,6 +1,7 @@
 import { z } from "zod"
+import { ENCRYPTION_NONE, ENCRYPTION_IDENTITY, ENCRYPTION_SERVER } from "../constants.js"
 
-export const EncryptionModeSchema = z.enum(["none", "identity", "server"])
+export const EncryptionModeSchema = z.enum([ENCRYPTION_NONE, ENCRYPTION_IDENTITY, ENCRYPTION_SERVER])
 
 export const CollectionConfigSchema = z.object({
   name: z.string().min(1),

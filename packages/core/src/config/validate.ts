@@ -1,4 +1,5 @@
 import type { SyncConfig } from "./schema.js"
+import { ENCRYPTION_IDENTITY, IDENTITY_PARAM, ROLE_PUBLIC } from "../constants.js"
 
 /**
  * Semantic validation beyond what Zod covers.
@@ -26,18 +27,18 @@ export function validateConfig(config: SyncConfig): string[] {
     }
 
     // Bundled collections must use identity encryption
-    if (col.bundle && col.encryption !== "identity") {
-      errors.push(`Collection "${col.name}": bundled collections must use "identity" encryption`)
+    if (col.bundle && col.encryption !== ENCRYPTION_IDENTITY) {
+      errors.push(`Collection "${col.name}": bundled collections must use "${ENCRYPTION_IDENTITY}" encryption`)
     }
 
     // Bundled collections must have {identity} in storagePath
-    if (col.bundle && !col.storagePath.includes("{identity}")) {
-      errors.push(`Collection "${col.name}": bundled collections must have {identity} in storagePath`)
+    if (col.bundle && !col.storagePath.includes(IDENTITY_PARAM)) {
+      errors.push(`Collection "${col.name}": bundled collections must have ${IDENTITY_PARAM} in storagePath`)
     }
 
     // readRoles or writeRoles should not be empty (unless pullOnly/pushOnly)
     if (!col.pullOnly && col.readRoles.length === 0) {
-      errors.push(`Collection "${col.name}": readRoles must not be empty (use ["public"] for public access)`)
+      errors.push(`Collection "${col.name}": readRoles must not be empty (use ["${ROLE_PUBLIC}"] for public access)`)
     }
     if (!col.pushOnly && col.writeRoles.length === 0 && !col.pullOnly) {
       // writeRoles can be empty for pullOnly collections

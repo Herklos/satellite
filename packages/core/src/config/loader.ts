@@ -3,8 +3,7 @@ import { SyncConfigSchema } from "./schema.js"
 import type { SyncConfig } from "./schema.js"
 import { validateConfig } from "./validate.js"
 import { StartupError } from "../errors.js"
-
-const DEFAULT_CONFIG_KEY = "__sync__/config.json"
+import { DEFAULT_CONFIG_KEY, CONTENT_TYPE_JSON } from "../constants.js"
 
 /**
  * Load and validate a SyncConfig from storage.
@@ -44,6 +43,6 @@ export async function saveConfig(
   }
 
   await store.put(configKey, JSON.stringify(config, null, 2), {
-    contentType: "application/json",
+    contentType: CONTENT_TYPE_JSON,
   })
 }
