@@ -19,7 +19,6 @@ Works with any storage backend (S3, MongoDB, in-memory) and any auth model. The 
 |---|---|---|
 | `@satellite/client` | TypeScript | Browser, Node.js & React Native client with sync manager |
 | `satellite-sdk` | Python | Async client (httpx) with sync manager |
-| `satellite-sdk` | Rust | Native + WASM client with sync manager |
 
 ## Quick Start
 
@@ -251,38 +250,6 @@ async with SatelliteClient(
     )
     await sync.pull()
     await sync.push({"theme": "dark", "lang": "en"})
-```
-
-### Rust
-
-```rust
-use satellite_sdk::{SatelliteClient, SyncManager, SyncManagerOptions};
-
-let client = SatelliteClient::new("https://api.example.com/v1", None);
-
-// Low-level
-let pulled = client.pull("/pull/users/abc/settings", None).await?;
-
-// High-level
-let mut sync = SyncManager::new(SyncManagerOptions {
-    client,
-    pull_path: "/pull/users/abc/settings".into(),
-    push_path: "/push/users/abc/settings".into(),
-    encryption_secret: Some("my-secret".into()),
-    encryption_salt: Some("user-abc".into()),
-    ..Default::default()
-})?;
-sync.pull().await?;
-```
-
-The Rust client supports both native (reqwest) and WASM (gloo-net) targets via feature flags:
-
-```toml
-# Native (default)
-satellite-sdk = "0.1"
-
-# WASM
-satellite-sdk = { version = "0.1", default-features = false, features = ["wasm"] }
 ```
 
 ### Auth Provider
