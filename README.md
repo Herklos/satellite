@@ -351,6 +351,124 @@ import { SyncManager } from "@satellite/client"
 
 Alternatively, if your polyfill patches `globalThis.crypto` (e.g., `react-native-quick-crypto/polyfill`), no explicit configuration is needed.
 
+### Persistence
+
+SyncManager can persist its state (`lastHash`, `lastCheckpoint`, `localData`) across restarts via a pluggable `StorageProvider` interface. Storage is optional — in-memory-only is the default.
+
+```typescript
+interface StorageProvider {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+  delete(key: string): Promise<void>
+}
+```
+
+Any backend that implements this interface works: SQLite, IndexedDB, localStorage, AsyncStorage, files, etc.
+
+#### localStorage (Browser)
+
+```ts
+import { SyncManager, type StorageProvider } from "@satellite/client"
+
+const storage: StorageProvider = {
+  async get(key) { return localStorage.getItem(`satellite:${key}`) },
+  async set(key, value) { localStorage.setItem(`satellite:${key}`, value) },
+  async delete(key) { localStorage.removeItem(`satellite:${key}`) },
+}
+
+const sync = new SyncManager({ client, pullPath, pushPath, storage })
+await sync.restore() // load persisted state
+await sync.pull()    // auto-persists after pull/push
+```
+
+#### SQLite (Node.js with better-sqlite3)
+
+```ts
+import Database from "better-sqlite3"
+import type { StorageProvider } from "@satellite/client"
+
+function createSqliteStorage(dbPath: string, namespace: string): StorageProvider {
+  const db = new Database(dbPath)
+  db.exec(`CREATE TABLE IF NOT EXISTS satellite_kv (
+    namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+    PRIMARY KEY (namespace, key)
+  )`)
+  const get = db.prepare("SELECT value FROM satellite_kv WHERE namespace = ? AND key = ?")
+  const set = db.prepare(`INSERT INTO satellite_kv (namespace, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(namespace, key) DO UPDATE SET value = excluded.value`)
+  const del = db.prepare("DELETE FROM satellite_kv WHERE namespace = ? AND key = ?")
+
+  return {
+    async get(key) { return (get.get(namespace, key) as any)?.value ?? null },
+    async set(key, value) { set.run(namespace, key, value) },
+    async delete(key) { del.run(namespace, key) },
+  }
+}
+```
+
+#### React Native (expo-sqlite)
+
+```ts
+import * as SQLite from "expo-sqlite"
+import type { StorageProvider } from "@satellite/client"
+
+function createExpoStorage(dbName: string, namespace: string): StorageProvider {
+  const db = SQLite.openDatabaseSync(dbName)
+  db.execSync(`CREATE TABLE IF NOT EXISTS satellite_kv (
+    namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+    PRIMARY KEY (namespace, key)
+  )`)
+  return {
+    async get(key) {
+      return db.getFirstSync<{ value: string }>(
+        "SELECT value FROM satellite_kv WHERE namespace = ? AND key = ?",
+        [namespace, key]
+      )?.value ?? null
+    },
+    async set(key, value) {
+      db.runSync(`INSERT INTO satellite_kv (namespace, key, value) VALUES (?, ?, ?)
+        ON CONFLICT(namespace, key) DO UPDATE SET value = excluded.value`,
+        [namespace, key, value])
+    },
+    async delete(key) {
+      db.runSync("DELETE FROM satellite_kv WHERE namespace = ? AND key = ?", [namespace, key])
+    },
+  }
+}
+```
+
+#### Global storage factory
+
+Use `configurePlatform()` to set a default storage factory so all SyncManagers auto-persist:
+
+```ts
+import { configurePlatform } from "@satellite/client"
+
+configurePlatform({
+  storage: (namespace) => createSqliteStorage("./satellite.db", namespace),
+})
+
+// SyncManagers auto-use the factory (namespace = pullPath)
+const sync = new SyncManager({ client, pullPath, pushPath })
+await sync.restore()
+```
+
+#### Encrypted persistence
+
+When E2E encryption is enabled, you can persist data encrypted at rest:
+
+```ts
+const sync = new SyncManager({
+  client, pullPath, pushPath,
+  storage,
+  encryptionSecret: "my-secret",
+  encryptionSalt: "user-abc",
+  persistEncrypted: true, // localData stored as { _encrypted: "..." }
+})
+```
+
+With `persistEncrypted: false` (default), data is stored as plaintext for faster restores.
+
 ## Storage Adapter
 
 Implement `IObjectStore` for your backend:
