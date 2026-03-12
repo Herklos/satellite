@@ -322,26 +322,15 @@ Alternatively, if your polyfill patches `globalThis.crypto` (e.g., `react-native
 
 SyncManager focuses on sync logic only — no UI reactivity, no persistence. Use a state manager like [Zustand](https://github.com/pmndrs/zustand) to add reactive state, offline persistence, and offline-first writes on top.
 
-#### Offline-first binding (React / React Native)
+Create a dedicated store + SyncManager pair per collection using a factory function:
 
-This example implements the offline-first pattern: writes are instant (applied to local state immediately), persisted to disk, then synced to the server in the background. If the network is unavailable, pending writes are queued and flushed when connectivity returns.
+#### Store factory
 
 ```ts
-import { create } from "zustand"
+import { create, type StoreApi, useStore } from "zustand"
 import { persist, createJSONStorage } from "zustand/middleware"
 import AsyncStorage from "@react-native-async-storage/async-storage"
-import { SatelliteClient, SyncManager } from "@satellite/client"
-
-const client = new SatelliteClient({
-  baseUrl: "https://api.example.com/v1",
-  auth: async () => ({ Authorization: `Bearer ${await getToken()}` }),
-})
-
-const syncManager = new SyncManager({
-  client,
-  pullPath: "/pull/users/abc/settings",
-  pushPath: "/push/users/abc/settings",
-})
+import { SatelliteClient, SyncManager, type SyncManagerOptions } from "@satellite/client"
 
 interface SatelliteStore {
   data: Record<string, unknown>
@@ -355,85 +344,99 @@ interface SatelliteStore {
   setOnline: (online: boolean) => void
 }
 
-const useSatelliteStore = create<SatelliteStore>()(
-  persist(
-    (set, get) => ({
-      data: {},
-      syncing: false,
-      online: true,
-      dirty: false,
-      error: null,
+function createSatelliteStore(
+  name: string,
+  syncManager: SyncManager,
+) {
+  return create<SatelliteStore>()(
+    persist(
+      (set, get) => ({
+        data: {},
+        syncing: false,
+        online: true,
+        dirty: false,
+        error: null,
 
-      // Pull remote state and merge into local
-      pull: async () => {
-        set({ syncing: true, error: null })
-        try {
-          await syncManager.pull()
-          set({ data: syncManager.getData(), syncing: false })
-        } catch (err) {
-          set({ syncing: false, error: (err as Error).message })
-        }
-      },
+        pull: async () => {
+          set({ syncing: true, error: null })
+          try {
+            await syncManager.pull()
+            set({ data: syncManager.getData(), syncing: false })
+          } catch (err) {
+            set({ syncing: false, error: (err as Error).message })
+          }
+        },
 
-      // Optimistic local write — instant, no network needed
-      set: (modifier) => {
-        const next = modifier(get().data)
-        set({ data: next, dirty: true })
-        // Attempt background sync if online
-        if (get().online) get().flush()
-      },
+        set: (modifier) => {
+          const next = modifier(get().data)
+          set({ data: next, dirty: true })
+          if (get().online) get().flush()
+        },
 
-      // Push local state to server
-      flush: async () => {
-        if (get().syncing || !get().dirty) return
-        set({ syncing: true, error: null })
-        try {
-          await syncManager.push(get().data)
-          set({ data: syncManager.getData(), syncing: false, dirty: false })
-        } catch (err) {
-          // Data stays in local state + persisted — will retry on next flush
-          set({ syncing: false, error: (err as Error).message })
-        }
-      },
+        flush: async () => {
+          if (get().syncing || !get().dirty) return
+          set({ syncing: true, error: null })
+          try {
+            await syncManager.push(get().data)
+            set({ data: syncManager.getData(), syncing: false, dirty: false })
+          } catch (err) {
+            set({ syncing: false, error: (err as Error).message })
+          }
+        },
 
-      // Call when connectivity changes
-      setOnline: (online) => {
-        set({ online })
-        if (online && get().dirty) get().flush()
+        setOnline: (online) => {
+          set({ online })
+          if (online && get().dirty) get().flush()
+        },
+      }),
+      {
+        name: `satellite-${name}`,
+        // Browser: uses localStorage by default
+        // React Native: use AsyncStorage
+        storage: createJSONStorage(() => AsyncStorage),
+        partialize: (state) => ({ data: state.data, dirty: state.dirty }),
       },
-    }),
-    {
-      name: "satellite-settings",
-      // Browser: uses localStorage by default
-      // React Native: use AsyncStorage
-      storage: createJSONStorage(() => AsyncStorage),
-      // Persist data + dirty flag so pending writes survive app restarts
-      partialize: (state) => ({ data: state.data, dirty: state.dirty }),
-    },
-  ),
+    ),
+  )
+}
+```
+
+#### Creating stores per collection
+
+```ts
+const client = new SatelliteClient({
+  baseUrl: "https://api.example.com/v1",
+  auth: async () => ({ Authorization: `Bearer ${await getToken()}` }),
+})
+
+// One store + SyncManager per collection
+const useSettingsStore = createSatelliteStore(
+  "settings",
+  new SyncManager({
+    client,
+    pullPath: "/pull/users/abc/settings",
+    pushPath: "/push/users/abc/settings",
+  }),
+)
+
+const useNotesStore = createSatelliteStore(
+  "notes",
+  new SyncManager({
+    client,
+    pullPath: "/pull/users/abc/notes",
+    pushPath: "/push/users/abc/notes",
+    encryptionSecret: "user-secret",
+    encryptionSalt: "user-abc",
+  }),
 )
 ```
 
-#### Usage in a component
+#### Usage in components
 
 ```tsx
 function Settings() {
-  const { data, syncing, pull, set } = useSatelliteStore()
-
+  const { data, syncing, pull, set } = useSettingsStore()
   useEffect(() => { pull() }, [])
-
-  // Listen for connectivity changes (React Native: use NetInfo instead)
-  const setOnline = useSatelliteStore((s) => s.setOnline)
-  useEffect(() => {
-    const on = () => setOnline(true)
-    const off = () => setOnline(false)
-    window.addEventListener("online", on)
-    window.addEventListener("offline", off)
-    return () => {
-      window.removeEventListener("online", on)
-      window.removeEventListener("offline", off)
-    }
-  }, [setOnline])
 
   return (
     <button
@@ -444,13 +447,51 @@ function Settings() {
     </button>
   )
 }
+
+function Notes() {
+  const { data, pull, set } = useNotesStore()
+  useEffect(() => { pull() }, [])
+
+  const notes = (data.items ?? []) as string[]
+  return (
+    <>
+      <ul>{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+      <button onClick={() => set((d) => ({
+        ...d,
+        items: [...(d.items as string[] ?? []), "new note"],
+      }))}>
+        Add note
+      </button>
+    </>
+  )
+}
+```
+
+#### Connectivity listener
+
+```ts
+// Browser
+function useOnlineStatus(...stores: StoreApi<SatelliteStore>[]) {
+  useEffect(() => {
+    const on = () => stores.forEach((s) => s.getState().setOnline(true))
+    const off = () => stores.forEach((s) => s.getState().setOnline(false))
+    window.addEventListener("online", on)
+    window.addEventListener("offline", off)
+    return () => {
+      window.removeEventListener("online", on)
+      window.removeEventListener("offline", off)
+    }
+  }, [stores])
+}
+
+// React Native: use @react-native-community/netinfo instead
 ```
 
 This gives you:
+- **One store per collection** — each collection syncs, persists, and re-renders independently
 - **Offline-first** — writes apply instantly to local state and persist to disk; background sync pushes to server when online
 - **Automatic retry** — pending writes (`dirty: true`) flush when connectivity returns or on next app launch
-- **Reactive UI** — components re-render when data changes, no network roundtrip needed for reads
-- **Selectors** — subscribe to specific fields to avoid unnecessary re-renders: `useSatelliteStore(s => s.data.theme)`
+- **Selectors** — subscribe to specific fields to avoid unnecessary re-renders: `useSettingsStore(s => s.data.theme)`
 - **React Native support** — swap `localStorage` for `AsyncStorage`; use `@react-native-community/netinfo` for connectivity detection
 
 ## Storage Adapter
