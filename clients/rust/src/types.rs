@@ -45,6 +45,9 @@ pub enum SatelliteError {
 
     #[error("encryption error: {0}")]
     Encryption(String),
+
+    #[error("storage error: {0}")]
+    Storage(String),
 }
 
 /// Auth provider trait: returns headers to include in requests.

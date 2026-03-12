@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::client::SatelliteClient;
 use crate::crypto::Encryptor;
 use crate::hash::stable_stringify;
+use crate::storage::StorageProvider;
 use crate::types::{DataSigner, PullResponse, SatelliteError};
 
 /// Default deep-merge: remote wins on leaf conflicts.
@@ -51,6 +52,8 @@ pub struct SyncManager {
     max_retries: u32,
     encryptor: Option<Encryptor>,
     signer: Option<Box<dyn DataSigner>>,
+    storage: Option<Box<dyn StorageProvider>>,
+    persist_encrypted: bool,
 
     last_hash: Option<String>,
     last_checkpoint: u64,
@@ -68,6 +71,10 @@ pub struct SyncManagerOptions {
     pub encryption_salt: Option<String>,
     pub encryption_info: Option<String>,
     pub sign_data: Option<Box<dyn DataSigner>>,
+    /// Optional storage provider for persisting sync state across restarts.
+    pub storage: Option<Box<dyn StorageProvider>>,
+    /// When true and encryption is enabled, persist localData in encrypted form. Default: false.
+    pub persist_encrypted: bool,
 }
 
 impl SyncManager {
@@ -89,6 +96,8 @@ impl SyncManager {
             max_retries: opts.max_retries.unwrap_or(3),
             encryptor,
             signer: opts.sign_data,
+            storage: opts.storage,
+            persist_encrypted: opts.persist_encrypted,
             last_hash: None,
             last_checkpoint: 0,
             local_data: HashMap::new(),
@@ -108,6 +117,74 @@ impl SyncManager {
     /// Get the last checkpoint timestamp.
     pub fn checkpoint(&self) -> u64 {
         self.last_checkpoint
+    }
+
+    /// Restore persisted state from storage.
+    /// Call once after construction, before the first pull.
+    /// Returns true if state was found and restored.
+    pub async fn restore(&mut self) -> Result<bool, SatelliteError> {
+        let storage = match &self.storage {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        let hash = storage.get("lastHash").await?;
+        let cp = storage.get("lastCheckpoint").await?;
+        let data = storage.get("localData").await?;
+
+        if hash.is_none() && cp.is_none() && data.is_none() {
+            return Ok(false);
+        }
+
+        self.last_hash = hash.filter(|h| !h.is_empty());
+        self.last_checkpoint = cp.and_then(|c| c.parse().ok()).unwrap_or(0);
+
+        if let Some(data_str) = data {
+            let parsed: HashMap<String, Value> = serde_json::from_str(&data_str)
+                .map_err(|e| SatelliteError::Storage(e.to_string()))?;
+
+            self.local_data = if self.persist_encrypted {
+                if let Some(enc) = &self.encryptor {
+                    enc.decrypt(&parsed)?
+                } else {
+                    parsed
+                }
+            } else {
+                parsed
+            };
+        }
+
+        Ok(true)
+    }
+
+    async fn persist_state(&self) -> Result<(), SatelliteError> {
+        let storage = match &self.storage {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let data_to_store = if self.persist_encrypted {
+            if let Some(enc) = &self.encryptor {
+                enc.encrypt(&self.local_data)?
+            } else {
+                self.local_data.clone()
+            }
+        } else {
+            self.local_data.clone()
+        };
+
+        let data_str = serde_json::to_string(&data_to_store)
+            .map_err(|e| SatelliteError::Storage(e.to_string()))?;
+
+        storage
+            .set("lastHash", self.last_hash.as_deref().unwrap_or(""))
+            .await?;
+        storage
+            .set("lastCheckpoint", &self.last_checkpoint.to_string())
+            .await?;
+        storage.set("localData", &data_str).await?;
+
+        Ok(())
     }
 
     /// Pull latest data from the server.
@@ -138,6 +215,7 @@ impl SyncManager {
 
         self.last_hash = Some(result.hash.clone());
         self.last_checkpoint = result.timestamp;
+        self.persist_state().await?;
         Ok(result)
     }
 
@@ -173,6 +251,7 @@ impl SyncManager {
                     self.last_hash = Some(result.hash.clone());
                     self.last_checkpoint = result.timestamp;
                     self.local_data = pending_data;
+                    self.persist_state().await?;
                     return Ok(PushSuccess {
                         hash: result.hash,
                         timestamp: result.timestamp,
