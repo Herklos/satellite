@@ -320,12 +320,16 @@ Alternatively, if your polyfill patches `globalThis.crypto` (e.g., `react-native
 
 ### State Management with Zustand
 
-SyncManager is intentionally stateless regarding persistence and UI reactivity — it focuses on sync logic only. Use a state manager like [Zustand](https://github.com/pmndrs/zustand) to add reactive state and persistence on top.
+SyncManager focuses on sync logic only — no UI reactivity, no persistence. Use a state manager like [Zustand](https://github.com/pmndrs/zustand) to add reactive state, offline persistence, and offline-first writes on top.
 
-#### Basic binding (React)
+#### Offline-first binding (React / React Native)
+
+This example implements the offline-first pattern: writes are instant (applied to local state immediately), persisted to disk, then synced to the server in the background. If the network is unavailable, pending writes are queued and flushed when connectivity returns.
 
 ```ts
 import { create } from "zustand"
+import { persist, createJSONStorage } from "zustand/middleware"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 import { SatelliteClient, SyncManager } from "@satellite/client"
 
 const client = new SatelliteClient({
@@ -342,78 +346,25 @@ const syncManager = new SyncManager({
 interface SatelliteStore {
   data: Record<string, unknown>
   syncing: boolean
+  online: boolean
+  dirty: boolean
   error: string | null
   pull: () => Promise<void>
-  push: (data: Record<string, unknown>) => Promise<void>
-  update: (modifier: (current: Record<string, unknown>) => Record<string, unknown>) => Promise<void>
+  set: (modifier: (current: Record<string, unknown>) => Record<string, unknown>) => void
+  flush: () => Promise<void>
+  setOnline: (online: boolean) => void
 }
-
-const useSatelliteStore = create<SatelliteStore>((set) => ({
-  data: {},
-  syncing: false,
-  error: null,
-  pull: async () => {
-    set({ syncing: true, error: null })
-    try {
-      await syncManager.pull()
-      set({ data: syncManager.getData(), syncing: false })
-    } catch (err) {
-      set({ syncing: false, error: (err as Error).message })
-    }
-  },
-  push: async (data) => {
-    set({ syncing: true, error: null })
-    try {
-      await syncManager.push(data)
-      set({ data: syncManager.getData(), syncing: false })
-    } catch (err) {
-      set({ syncing: false, error: (err as Error).message })
-    }
-  },
-  update: async (modifier) => {
-    set({ syncing: true, error: null })
-    try {
-      await syncManager.update(modifier)
-      set({ data: syncManager.getData(), syncing: false })
-    } catch (err) {
-      set({ syncing: false, error: (err as Error).message })
-    }
-  },
-}))
-
-// In a component
-function Settings() {
-  const { data, syncing, pull, update } = useSatelliteStore()
-
-  useEffect(() => { pull() }, [])
-
-  return (
-    <button
-      disabled={syncing}
-      onClick={() => update((d) => ({ ...d, theme: "dark" }))}
-    >
-      Theme: {data.theme as string}
-    </button>
-  )
-}
-```
-
-#### With persistence (Zustand persist middleware)
-
-Zustand's built-in `persist` middleware handles offline caching automatically. It works with `localStorage`, `AsyncStorage` (React Native), or any custom storage engine:
-
-```ts
-import { create } from "zustand"
-import { persist, createJSONStorage } from "zustand/middleware"
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import { SyncManager } from "@satellite/client"
 
 const useSatelliteStore = create<SatelliteStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       data: {},
       syncing: false,
+      online: true,
+      dirty: false,
       error: null,
+
+      // Pull remote state and merge into local
       pull: async () => {
         set({ syncing: true, error: null })
         try {
@@ -423,23 +374,32 @@ const useSatelliteStore = create<SatelliteStore>()(
           set({ syncing: false, error: (err as Error).message })
         }
       },
-      push: async (data) => {
+
+      // Optimistic local write — instant, no network needed
+      set: (modifier) => {
+        const next = modifier(get().data)
+        set({ data: next, dirty: true })
+        // Attempt background sync if online
+        if (get().online) get().flush()
+      },
+
+      // Push local state to server
+      flush: async () => {
+        if (get().syncing || !get().dirty) return
         set({ syncing: true, error: null })
         try {
-          await syncManager.push(data)
-          set({ data: syncManager.getData(), syncing: false })
+          await syncManager.push(get().data)
+          set({ data: syncManager.getData(), syncing: false, dirty: false })
         } catch (err) {
+          // Data stays in local state + persisted — will retry on next flush
           set({ syncing: false, error: (err as Error).message })
         }
       },
-      update: async (modifier) => {
-        set({ syncing: true, error: null })
-        try {
-          await syncManager.update(modifier)
-          set({ data: syncManager.getData(), syncing: false })
-        } catch (err) {
-          set({ syncing: false, error: (err as Error).message })
-        }
+
+      // Call when connectivity changes
+      setOnline: (online) => {
+        set({ online })
+        if (online && get().dirty) get().flush()
       },
     }),
     {
@@ -447,18 +407,51 @@ const useSatelliteStore = create<SatelliteStore>()(
       // Browser: uses localStorage by default
       // React Native: use AsyncStorage
       storage: createJSONStorage(() => AsyncStorage),
-      // Only persist the data, not transient state
-      partialize: (state) => ({ data: state.data }),
+      // Persist data + dirty flag so pending writes survive app restarts
+      partialize: (state) => ({ data: state.data, dirty: state.dirty }),
     },
   ),
 )
 ```
 
+#### Usage in a component
+
+```tsx
+function Settings() {
+  const { data, syncing, pull, set } = useSatelliteStore()
+
+  useEffect(() => { pull() }, [])
+
+  // Listen for connectivity changes (React Native: use NetInfo instead)
+  const setOnline = useSatelliteStore((s) => s.setOnline)
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener("online", on)
+    window.addEventListener("offline", off)
+    return () => {
+      window.removeEventListener("online", on)
+      window.removeEventListener("offline", off)
+    }
+  }, [setOnline])
+
+  return (
+    <button
+      disabled={syncing}
+      onClick={() => set((d) => ({ ...d, theme: "dark" }))}
+    >
+      Theme: {data.theme as string}
+    </button>
+  )
+}
+```
+
 This gives you:
-- **Reactive UI** — components re-render when synced data changes
-- **Offline persistence** — cached data survives app restarts via Zustand's `persist` middleware
+- **Offline-first** — writes apply instantly to local state and persist to disk; background sync pushes to server when online
+- **Automatic retry** — pending writes (`dirty: true`) flush when connectivity returns or on next app launch
+- **Reactive UI** — components re-render when data changes, no network roundtrip needed for reads
 - **Selectors** — subscribe to specific fields to avoid unnecessary re-renders: `useSatelliteStore(s => s.data.theme)`
-- **React Native support** — use `AsyncStorage` or `expo-sqlite` as the persist backend
+- **React Native support** — swap `localStorage` for `AsyncStorage`; use `@react-native-community/netinfo` for connectivity detection
 
 ## Storage Adapter
 
