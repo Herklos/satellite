@@ -43,18 +43,13 @@ export interface Base64Provider {
   decode(encoded: string): Uint8Array
 }
 
-import type { StorageFactory } from "./storage.js"
-
 export interface PlatformConfig {
   crypto?: CryptoProvider
   base64?: Base64Provider
-  /** Default storage factory. Called with a namespace to create scoped storage. */
-  storage?: StorageFactory
 }
 
 let _crypto: CryptoProvider | undefined
 let _base64: Base64Provider | undefined
-let _storage: StorageFactory | undefined
 
 /**
  * Configure platform-specific providers for environments
@@ -80,7 +75,6 @@ let _storage: StorageFactory | undefined
 export function configurePlatform(config: PlatformConfig): void {
   if (config.crypto) _crypto = config.crypto
   if (config.base64) _base64 = config.base64
-  if (config.storage) _storage = config.storage
 }
 
 /** Resolve the active crypto provider. */
@@ -93,11 +87,6 @@ export function getCrypto(): CryptoProvider {
     "@satellite/client: No crypto provider available. " +
       "In React Native, call configurePlatform({ crypto: ... }) before using the SDK.",
   )
-}
-
-/** Resolve the global storage factory, if configured. */
-export function getStorageFactory(): StorageFactory | undefined {
-  return _storage
 }
 
 /** Resolve the active base64 provider. */

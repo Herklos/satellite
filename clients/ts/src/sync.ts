@@ -3,8 +3,6 @@ import { ConflictError } from "./types.js"
 import { SatelliteClient } from "./client.js"
 import type { Encryptor } from "./crypto.js"
 import { createEncryptor } from "./crypto.js"
-import type { StorageProvider } from "./storage.js"
-import { getStorageFactory } from "./platform.js"
 
 /** Default deep-merge: remote wins on conflicts. */
 function defaultMerge(
@@ -80,10 +78,6 @@ export interface SyncManagerOptions {
   encryptionInfo?: string
   /** Optional callback to sign data for author provenance. Receives stableStringify(data), returns signature string. */
   signData?: (data: string) => Promise<string>
-  /** Optional storage provider for persisting sync state across restarts. */
-  storage?: StorageProvider
-  /** When true and encryption is enabled, persist localData in encrypted form. Default: false (plaintext). */
-  persistEncrypted?: boolean
 }
 
 /**
@@ -100,8 +94,6 @@ export class SyncManager {
   private readonly maxRetries: number
   private readonly encryptor: Encryptor | null
   private readonly signData?: (data: string) => Promise<string>
-  private readonly storage: StorageProvider | null
-  private readonly persistEncrypted: boolean
 
   private lastHash: string | null = null
   private lastCheckpoint: number = 0
@@ -118,11 +110,6 @@ export class SyncManager {
       options.encryptionSecret && options.encryptionSalt
         ? createEncryptor(options.encryptionSecret, options.encryptionSalt, options.encryptionInfo)
         : null
-    this.persistEncrypted = options.persistEncrypted ?? false
-
-    // Resolve storage: explicit option > global factory > none
-    const factory = getStorageFactory()
-    this.storage = options.storage ?? (factory ? factory(options.pullPath) : null)
   }
 
   /** Get the current local data snapshot. */
@@ -138,46 +125,6 @@ export class SyncManager {
   /** Get the last checkpoint timestamp. */
   getCheckpoint(): number {
     return this.lastCheckpoint
-  }
-
-  /**
-   * Restore persisted state from storage.
-   * Call once after construction, before the first pull.
-   * Returns true if state was found and restored.
-   */
-  async restore(): Promise<boolean> {
-    if (!this.storage) return false
-    const [hash, cp, data] = await Promise.all([
-      this.storage.get("lastHash"),
-      this.storage.get("lastCheckpoint"),
-      this.storage.get("localData"),
-    ])
-    if (hash === null && cp === null && data === null) return false
-    this.lastHash = hash || null
-    this.lastCheckpoint = cp ? Number(cp) : 0
-    if (data) {
-      const parsed = JSON.parse(data) as Record<string, unknown>
-      this.localData =
-        this.persistEncrypted && this.encryptor
-          ? await this.encryptor.decrypt(parsed)
-          : parsed
-    }
-    return true
-  }
-
-  private async persistState(): Promise<void> {
-    if (!this.storage) return
-    let dataToStore: Record<string, unknown>
-    if (this.persistEncrypted && this.encryptor) {
-      dataToStore = await this.encryptor.encrypt(this.localData)
-    } else {
-      dataToStore = this.localData
-    }
-    await Promise.all([
-      this.storage.set("lastHash", this.lastHash ?? ""),
-      this.storage.set("lastCheckpoint", String(this.lastCheckpoint)),
-      this.storage.set("localData", JSON.stringify(dataToStore)),
-    ])
   }
 
   /**
@@ -199,7 +146,6 @@ export class SyncManager {
 
     this.lastHash = result.hash
     this.lastCheckpoint = result.timestamp
-    await this.persistState()
     return result
   }
 
@@ -236,7 +182,6 @@ export class SyncManager {
         this.lastHash = result.hash
         this.lastCheckpoint = result.timestamp
         this.localData = pendingData
-        await this.persistState()
         return result
       } catch (err) {
         if (!(err instanceof ConflictError) || attempt >= this.maxRetries) {

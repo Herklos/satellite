@@ -1,6 +1,6 @@
 export { configurePlatform } from "./platform.js"
 export type { CryptoProvider, Base64Provider, PlatformConfig } from "./platform.js"
-export type { StorageProvider, StorageFactory } from "./storage.js"
+
 export { SatelliteClient } from "./client.js"
 export { SyncManager } from "./sync.js"
 export type { SyncManagerOptions } from "./sync.js"
