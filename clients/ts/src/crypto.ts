@@ -5,6 +5,8 @@
  * matching the server-side EncryptedObjectStore pattern.
  */
 
+import { getCrypto, getBase64 } from "./platform.js"
+
 const ALGO = "AES-GCM"
 const IV_BYTES = 12
 const DEFAULT_INFO = "satellite-e2e"
@@ -20,14 +22,15 @@ export interface Encryptor {
 
 async function deriveKey(secret: string, salt: string, info: string): Promise<CryptoKey> {
   const enc = new TextEncoder()
-  const keyMaterial = await crypto.subtle.importKey(
+  const c = getCrypto()
+  const keyMaterial = await c.subtle.importKey(
     "raw",
     enc.encode(secret),
     "HKDF",
     false,
-    ["deriveKey"]
+    ["deriveKey"],
   )
-  return crypto.subtle.deriveKey(
+  return c.subtle.deriveKey(
     {
       name: "HKDF",
       hash: "SHA-256",
@@ -37,7 +40,7 @@ async function deriveKey(secret: string, salt: string, info: string): Promise<Cr
     keyMaterial,
     { name: ALGO, length: 256 },
     false,
-    ["encrypt", "decrypt"]
+    ["encrypt", "decrypt"],
   )
 }
 
@@ -54,16 +57,17 @@ export function createEncryptor(secret: string, salt: string, info: string = DEF
   return {
     async encrypt(data: Record<string, unknown>): Promise<Record<string, unknown>> {
       const key = await keyPromise
+      const c = getCrypto()
+      const b64 = getBase64()
       const plaintext = new TextEncoder().encode(JSON.stringify(data))
-      const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
-      const ciphertext = await crypto.subtle.encrypt({ name: ALGO, iv }, key, plaintext)
+      const iv = c.getRandomValues(new Uint8Array(IV_BYTES))
+      const ciphertext = await c.subtle.encrypt({ name: ALGO, iv }, key, plaintext)
 
       const combined = new Uint8Array(iv.length + ciphertext.byteLength)
       combined.set(iv)
       combined.set(new Uint8Array(ciphertext), iv.length)
-      const encoded = btoa(String.fromCharCode(...combined))
 
-      return { [ENCRYPTED_KEY]: encoded }
+      return { [ENCRYPTED_KEY]: b64.encode(combined) }
     },
 
     async decrypt(wrapper: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -73,10 +77,12 @@ export function createEncryptor(secret: string, salt: string, info: string = DEF
       }
 
       const key = await keyPromise
-      const combined = Uint8Array.from(atob(encoded), c => c.charCodeAt(0))
+      const c = getCrypto()
+      const b64 = getBase64()
+      const combined = b64.decode(encoded)
       const iv = combined.slice(0, IV_BYTES)
       const ciphertext = combined.slice(IV_BYTES)
-      const plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ciphertext)
+      const plaintext = await c.subtle.decrypt({ name: ALGO, iv }, key, ciphertext)
       return JSON.parse(new TextDecoder().decode(plaintext))
     },
   }

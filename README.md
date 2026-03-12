@@ -17,7 +17,7 @@ Works with any storage backend (S3, MongoDB, in-memory) and any auth model. The 
 
 | Package | Language | Description |
 |---|---|---|
-| `@satellite/client` | TypeScript | Browser & Node.js client with sync manager |
+| `@satellite/client` | TypeScript | Browser, Node.js & React Native client with sync manager |
 | `satellite-sdk` | Python | Async client (httpx) with sync manager |
 | `satellite-sdk` | Rust | Native + WASM client with sync manager |
 
@@ -153,6 +153,8 @@ All clients implement the same protocol: pull/push with hash-based conflict dete
 
 ### TypeScript
 
+Works in Browser, Node.js, and React Native (see [Platform Support](#platform-support)).
+
 ```ts
 import { SatelliteClient, SyncManager } from "@satellite/client"
 
@@ -172,15 +174,58 @@ const sync = new SyncManager({
   client,
   pullPath: "/pull/users/abc/settings",
   pushPath: "/push/users/abc/settings",
-  // Optional E2E encryption
-  encryptionSecret: "my-secret",
-  encryptionSalt: "user-abc",
 })
 
 await sync.pull()
 await sync.push({ theme: "dark", lang: "en" })
 // Or: pull-modify-push in one call
 await sync.update((data) => ({ ...data, theme: "light" }))
+```
+
+#### Full example: Auth + E2E Encryption + Author Signing
+
+```ts
+import { SatelliteClient, SyncManager } from "@satellite/client"
+
+// 1. Create client with auth
+const client = new SatelliteClient({
+  baseUrl: "https://api.example.com/v1",
+  auth: async ({ method, path, body }) => ({
+    "X-Pubkey": myPubkey,
+    "X-Signature": await sign(method + path + (body ?? "")),
+  }),
+  // Optional: custom fetch for environments that need it
+  // fetch: customFetch,
+})
+
+// 2. Create sync manager with encryption and signing
+const sync = new SyncManager({
+  client,
+  pullPath: "/pull/users/abc/notes",
+  pushPath: "/push/users/abc/notes",
+  // E2E encryption: data is encrypted client-side before push,
+  // decrypted after pull. The server never sees plaintext.
+  encryptionSecret: "user-secret-key",
+  encryptionSalt: "user-abc",
+  encryptionInfo: "satellite-e2e", // optional, default: "satellite-e2e"
+  // Author signing: sign data for provenance verification
+  signData: async (data) => await sign(data),
+  // Custom conflict resolver (default: remote-wins deep merge)
+  onConflict: (local, remote) => ({ ...remote, ...local }),
+  maxRetries: 3,
+})
+
+// 3. Sync
+await sync.pull()
+console.log(sync.getData()) // decrypted data
+
+await sync.push({ notes: ["hello world"] }) // encrypted + signed automatically
+
+// Or pull-modify-push in one call
+await sync.update((current) => ({
+  ...current,
+  notes: [...(current.notes as string[]), "new note"],
+}))
 ```
 
 ### Python
@@ -261,6 +306,50 @@ auth: async ({ method, path, body }) => ({
 ### Client-Side Encryption
 
 All clients support optional AES-256-GCM encryption with HKDF-derived keys. When enabled, data is encrypted before push and decrypted after pull — the server never sees plaintext.
+
+You can also use the encryptor standalone:
+
+```ts
+import { createEncryptor } from "@satellite/client"
+
+const encryptor = createEncryptor("my-secret", "user-abc")
+const encrypted = await encryptor.encrypt({ hello: "world" })
+// => { _encrypted: "base64..." }
+const decrypted = await encryptor.decrypt(encrypted)
+// => { hello: "world" }
+```
+
+### Platform Support
+
+The TypeScript client uses the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) and has zero production dependencies.
+
+| Platform | Status | Notes |
+|---|---|---|
+| Browser | Works out of the box | Web Crypto API is native |
+| Node.js >= 15 | Works out of the box | `crypto.subtle` available globally |
+| React Native | Requires setup | See below |
+
+#### React Native Setup
+
+React Native's JS engines (Hermes, JSC) don't provide the Web Crypto API. Call `configurePlatform()` once at app startup before using the SDK:
+
+```ts
+import { configurePlatform } from "@satellite/client"
+import QuickCrypto from "react-native-quick-crypto"
+
+configurePlatform({
+  crypto: QuickCrypto,
+  base64: {
+    encode: (data) => Buffer.from(data).toString("base64"),
+    decode: (str) => new Uint8Array(Buffer.from(str, "base64")),
+  },
+})
+
+// Now use the SDK normally
+import { SyncManager } from "@satellite/client"
+```
+
+Alternatively, if your polyfill patches `globalThis.crypto` (e.g., `react-native-quick-crypto/polyfill`), no explicit configuration is needed.
 
 ## Storage Adapter
 

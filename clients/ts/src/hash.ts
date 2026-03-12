@@ -1,3 +1,5 @@
+import { getCrypto } from "./platform.js"
+
 /**
  * Deterministic JSON serialization with sorted keys (recursive).
  * Must produce identical output to the server's stableStringify.
@@ -24,7 +26,7 @@ export function stableStringify(value: unknown): string {
  */
 export async function computeHash(data: Record<string, unknown>): Promise<string> {
   const encoded = new TextEncoder().encode(stableStringify(data))
-  const buf = await crypto.subtle.digest("SHA-256", encoded)
+  const buf = await getCrypto().subtle.digest("SHA-256", encoded)
   return Array.from(new Uint8Array(buf))
     .map(b => b.toString(16).padStart(2, "0"))
     .join("")
