@@ -8,7 +8,7 @@ import pytest
 from satellite_sdk.crypto import Encryptor, ENCRYPTED_KEY
 
 
-VECTORS_PATH = pathlib.Path(__file__).parent.parent.parent / "test-vectors" / "crypto.json"
+VECTORS_PATH = pathlib.Path(__file__).parent.parent.parent.parent / "tests" / "test-vectors" / "crypto.json"
 VECTORS = json.loads(VECTORS_PATH.read_text())
 
 

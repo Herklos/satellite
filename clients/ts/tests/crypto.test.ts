@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { createEncryptor, ENCRYPTED_KEY } from "../src/crypto.js"
-import vectors from "../../test-vectors/crypto.json"
+import vectors from "../../../tests/test-vectors/crypto.json"
 
 describe("Encryptor", () => {
   it("round-trips data through encrypt/decrypt", async () => {

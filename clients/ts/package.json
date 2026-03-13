@@ -41,7 +41,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@satellite/core": "workspace:*",
+    "@satellite/server": "workspace:*",
     "hono": "^4.12.7",
     "immer": "^11.1.4",
     "typescript": "^5.5.0",

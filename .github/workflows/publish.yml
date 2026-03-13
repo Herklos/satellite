@@ -1,4 +1,4 @@
-name: Publish to GitHub Packages
+name: Publish TS Packages to GitHub Packages
 
 on:
   push:
@@ -28,17 +28,20 @@ jobs:
 
       - run: pnpm build
 
+      - name: Run tests
+        run: pnpm test
+
       - name: Set version and scope from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          cd packages/core
-          npm pkg set "name=@${OWNER}/satellite-core" "version=$VERSION"
+          cd servers/ts
+          npm pkg set "name=@${OWNER}/satellite-server" "version=$VERSION"
           cd ../../clients/ts
           npm pkg set "name=@${OWNER}/satellite-client" "version=$VERSION"
 
-      - name: Publish satellite-core
-        working-directory: packages/core
+      - name: Publish satellite-server
+        working-directory: servers/ts
         run: pnpm publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

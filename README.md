@@ -8,10 +8,10 @@ Works with any storage backend (S3, MongoDB, in-memory) and any auth model. The 
 
 ### Server
 
-| Package | Description |
-|---|---|
-| `@satellite/core` | Protocol, encryption, config, and Hono router |
-| `@satellite/s3-storage` | S3-compatible storage adapter (aws4fetch) |
+| Package | Language | Description |
+|---|---|---|
+| `@satellite/server` | TypeScript | Protocol, encryption, config, Hono router, S3 storage |
+| `satellite-server` | Python | Protocol, encryption, config, FastAPI router, S3 storage |
 
 ### Client SDKs
 
@@ -22,9 +22,11 @@ Works with any storage backend (S3, MongoDB, in-memory) and any auth model. The 
 
 ## Quick Start
 
+### TypeScript Server
+
 ```ts
-import { createSyncRouter, loadConfig, saveConfig } from "@satellite/core/router"
-import { S3ObjectStore } from "@satellite/s3-storage"
+import { createSyncRouter, loadConfig, saveConfig } from "@satellite/server/router"
+import { S3ObjectStore } from "@satellite/server/storage/s3"
 import { Hono } from "hono"
 
 const store = new S3ObjectStore({
@@ -74,6 +76,37 @@ const router = createSyncRouter({
 const app = new Hono()
 app.route("/v1", router)
 export default app
+```
+
+### Python Server
+
+```python
+from fastapi import FastAPI
+from satellite_server import load_config, save_config
+from satellite_server.router import create_sync_router, SyncRouterOptions, AuthResult
+from satellite_server.storage.s3 import S3ObjectStore, S3StorageOptions
+
+store = S3ObjectStore(S3StorageOptions(
+    access_key_id="...",
+    secret_access_key="...",
+    endpoint="https://s3.amazonaws.com",
+    bucket="my-bucket",
+))
+
+config = await load_config(store)
+
+async def role_resolver(request):
+    user = await verify_token(request.headers.get("authorization"))
+    return AuthResult(identity=user.id, roles=user.roles)
+
+router = create_sync_router(SyncRouterOptions(
+    store=store,
+    config=config,
+    role_resolver=role_resolver,
+))
+
+app = FastAPI()
+app.include_router(router, prefix="/v1")
 ```
 
 ## Protocol
@@ -506,7 +539,7 @@ This gives you:
 Implement `IObjectStore` for your backend:
 
 ```ts
-import type { IObjectStore } from "@satellite/core"
+import type { IObjectStore } from "@satellite/server"
 
 class MongoObjectStore implements IObjectStore {
   async getString(key: string): Promise<string | null> { /* ... */ }
@@ -521,13 +554,14 @@ class MongoObjectStore implements IObjectStore {
 
 ```
 satellite/
-├── packages/
-│   ├── core/              # Protocol, encryption, config, Hono router
-│   └── s3-storage/        # S3-compatible storage adapter (aws4fetch)
+├── servers/
+│   ├── ts/                # TypeScript server (protocol, encryption, config, Hono router, S3 storage)
+│   └── python/            # Python server (protocol, encryption, config, FastAPI router, S3 storage)
 ├── clients/
 │   ├── ts/                # TypeScript client SDK + Zustand binding
-│   ├── python/            # Python client SDK (httpx + cryptography)
-│   └── test-vectors/      # Cross-client hash/stringify test vectors
+│   └── python/            # Python client SDK (httpx + cryptography)
+├── tests/
+│   └── test-vectors/      # Cross-language hash/crypto test vectors
 ├── package.json           # pnpm workspace root
 └── pnpm-workspace.yaml
 ```
@@ -536,14 +570,26 @@ satellite/
 
 ```bash
 pnpm install
-pnpm test          # run all tests (unit + e2e)
+pnpm test          # run all TS tests (unit + e2e)
 pnpm test:watch    # run tests in watch mode
-pnpm typecheck     # typecheck all packages
-pnpm build         # build all packages
+pnpm typecheck     # typecheck all TS packages
+pnpm build         # build all TS packages
+
+# Python server
+cd servers/python
+uv venv && uv pip install -e ".[dev]"
+pytest -v
+
+# Python client
+cd clients/python
+uv venv && uv pip install -e ".[dev]"
+pytest -v
 ```
 
 ### Testing
 
-Tests use [Vitest](https://vitest.dev/). The TypeScript client includes end-to-end tests that wire a real `SatelliteClient` + `SyncManager` + Zustand store against a real Hono server with an in-memory storage backend — no mocks.
+TypeScript tests use [Vitest](https://vitest.dev/). Python tests use [pytest](https://docs.pytest.org/).
 
-Cross-client test vectors in `clients/test-vectors/` ensure `stableStringify` and `computeHash` produce identical results across TypeScript and Python.
+The TypeScript client includes end-to-end tests that wire a real `SatelliteClient` + `SyncManager` + Zustand store against a real Hono server with an in-memory storage backend — no mocks.
+
+Cross-language test vectors in `tests/test-vectors/` ensure `stableStringify` and `computeHash` produce identical results across all TypeScript and Python implementations.

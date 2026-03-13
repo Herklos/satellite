@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { stableStringify, computeHash } from "../src/hash.js"
-import vectors from "../../test-vectors/hash.json"
+import vectors from "../../../tests/test-vectors/hash.json"
 
 describe("stableStringify", () => {
   for (const { input, expected } of vectors.stableStringify) {

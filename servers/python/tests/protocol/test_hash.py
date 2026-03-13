@@ -5,9 +5,9 @@ import pathlib
 
 import pytest
 
-from satellite_sdk.hash import stable_stringify, compute_hash
+from satellite_server.protocol.hash import stable_stringify, compute_hash
 
-VECTORS_PATH = pathlib.Path(__file__).parent.parent.parent.parent / "tests" / "test-vectors" / "hash.json"
+VECTORS_PATH = pathlib.Path(__file__).parent.parent.parent.parent.parent / "tests" / "test-vectors" / "hash.json"
 VECTORS = json.loads(VECTORS_PATH.read_text())
 
 

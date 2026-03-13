@@ -1,0 +1,65 @@
+name: Publish Python Server to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: servers/python
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Run tests
+        working-directory: servers/python
+        run: pytest -v
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set version from tag
+        working-directory: servers/python
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/version = \"0.1.0\"/version = \"$VERSION\"/" pyproject.toml
+
+      - name: Build package
+        working-directory: servers/python
+        run: uv build
+
+      - name: Publish to PyPI
+        working-directory: servers/python
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
