@@ -517,11 +517,33 @@ class MongoObjectStore implements IObjectStore {
 }
 ```
 
+## Project Structure
+
+```
+satellite/
+├── packages/
+│   ├── core/              # Protocol, encryption, config, Hono router
+│   └── s3-storage/        # S3-compatible storage adapter (aws4fetch)
+├── clients/
+│   ├── ts/                # TypeScript client SDK + Zustand binding
+│   ├── python/            # Python client SDK (httpx + cryptography)
+│   └── test-vectors/      # Cross-client hash/stringify test vectors
+├── package.json           # pnpm workspace root
+└── pnpm-workspace.yaml
+```
+
 ## Development
 
 ```bash
 pnpm install
-pnpm test        # run all tests
-pnpm typecheck   # typecheck all packages
-pnpm build       # build all packages
+pnpm test          # run all tests (unit + e2e)
+pnpm test:watch    # run tests in watch mode
+pnpm typecheck     # typecheck all packages
+pnpm build         # build all packages
 ```
+
+### Testing
+
+Tests use [Vitest](https://vitest.dev/). The TypeScript client includes end-to-end tests that wire a real `SatelliteClient` + `SyncManager` + Zustand store against a real Hono server with an in-memory storage backend — no mocks.
+
+Cross-client test vectors in `clients/test-vectors/` ensure `stableStringify` and `computeHash` produce identical results across TypeScript and Python.
