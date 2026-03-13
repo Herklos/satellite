@@ -27,6 +27,7 @@ from satellite_server.constants import (
     OP_WRITE,
     ENCRYPTION_IDENTITY,
     ENCRYPTION_SERVER,
+    ENCRYPTION_DELEGATED,
     ACTION_PULL,
     ACTION_PUSH,
     IDENTITY_PARAM,
@@ -34,6 +35,9 @@ from satellite_server.constants import (
     QUERY_CHECKPOINT,
     HKDF_INFO_IDENTITY,
     HKDF_INFO_SERVER,
+    HKDF_INFO_DELEGATED,
+    HEADER_ENCRYPTION_SECRET,
+    HEADER_ENCRYPTION_SALT,
 )
 
 
@@ -155,7 +159,12 @@ def _resolve_store(
     params: dict[str, str],
     identity: str | None,
     opts: SyncRouterOptions,
-) -> IObjectStore:
+    request: Request | None = None,
+) -> IObjectStore | JSONResponse:
+    """Resolve the store for a collection, wrapping with encryption if needed.
+
+    Returns a JSONResponse (error) if delegated encryption headers are missing.
+    """
     if col.encryption == ENCRYPTION_IDENTITY:
         if not opts.encryption_secret:
             raise RuntimeError(f'Collection "{col.name}" requires encryption_secret')
@@ -176,6 +185,22 @@ def _resolve_store(
             opts.server_encryption_secret,
             opts.server_identity,
             opts.server_encryption_info or HKDF_INFO_SERVER,
+        )
+    if col.encryption == ENCRYPTION_DELEGATED:
+        if request is None:
+            raise RuntimeError("Request is required for delegated encryption")
+        secret = request.headers.get(HEADER_ENCRYPTION_SECRET)
+        salt = request.headers.get(HEADER_ENCRYPTION_SALT)
+        if not secret or not salt:
+            return JSONResponse(
+                {"error": "Delegated encryption requires X-Encryption-Secret and X-Encryption-Salt headers"},
+                status_code=400,
+            )
+        return EncryptedObjectStore(
+            base_store,
+            secret,
+            salt,
+            HKDF_INFO_DELEGATED,
         )
     return base_store
 
@@ -202,7 +227,10 @@ def _add_collection_routes(
                 return error
 
             document_key = _resolve_document_key(col.storage_path, params)
-            store = _resolve_store(col, opts.store, params, identity, opts)
+            store_or_error = _resolve_store(col, opts.store, params, identity, opts, request)
+            if isinstance(store_or_error, JSONResponse):
+                return store_or_error
+            store = store_or_error
             checkpoint_param = request.query_params.get(QUERY_CHECKPOINT)
             return await handle_sync_pull(
                 document_key, store, checkpoint_param,
@@ -259,7 +287,10 @@ def _add_collection_routes(
                 return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
 
             document_key = _resolve_document_key(col.storage_path, params)
-            store = _resolve_store(col, opts.store, params, identity, opts)
+            store_or_error = _resolve_store(col, opts.store, params, identity, opts, request)
+            if isinstance(store_or_error, JSONResponse):
+                return store_or_error
+            store = store_or_error
             return await handle_sync_push(
                 document_key, store, body, identity,
                 opts.signature_verifier, bool(col.client_encrypted),
@@ -293,7 +324,10 @@ def _add_bundled_routes(
             identity = None
 
         base_key = _resolve_document_key(storage_path, params)
-        store = _resolve_store(collections[0], opts.store, params, identity, opts)
+        store_or_error = _resolve_store(collections[0], opts.store, params, identity, opts, request)
+        if isinstance(store_or_error, JSONResponse):
+            return store_or_error
+        store = store_or_error
 
         any_client_encrypted = any(c.client_encrypted for c in collections)
         checkpoint_param = request.query_params.get(QUERY_CHECKPOINT)
@@ -374,7 +408,10 @@ def _add_bundled_routes(
                 return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
 
             document_key = f"{_resolve_document_key(storage_path, params)}/{col.name}"
-            store = _resolve_store(col, opts.store, params, identity, opts)
+            store_or_error = _resolve_store(col, opts.store, params, identity, opts, request)
+            if isinstance(store_or_error, JSONResponse):
+                return store_or_error
+            store = store_or_error
             return await handle_sync_push(
                 document_key, store, body, identity,
                 opts.signature_verifier, bool(col.client_encrypted),

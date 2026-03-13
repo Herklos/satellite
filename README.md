@@ -196,6 +196,46 @@ createSyncRouter({
 - **`"none"`** — stored in plaintext
 - **`"identity"`** — encrypted per-user with HKDF(secret, identity). Only the user can read their data.
 - **`"server"`** — encrypted with a server-wide key. All server code can read; clients cannot read raw storage.
+- **`"delegated"`** — encrypted with user-provided credentials passed via headers. The user generates a secret and uses their public key as salt. They can share both with an admin to grant decryption access.
+
+#### Delegated encryption
+
+With `"delegated"` mode, the encryption key is derived from credentials the user provides on each request via headers:
+
+- `X-Encryption-Secret` — the user's secret key
+- `X-Encryption-Salt` — the user's public key (used as HKDF salt)
+
+```json
+{
+  "name": "vault",
+  "storagePath": "users/{identity}/vault",
+  "readRoles": ["self"],
+  "writeRoles": ["self"],
+  "encryption": "delegated",
+  "maxBodyBytes": 65536
+}
+```
+
+```bash
+# Push with delegated encryption
+curl -X POST /push/users/abc/vault \
+  -H "X-Encryption-Secret: my-secret-key" \
+  -H "X-Encryption-Salt: my-public-key" \
+  -H "Content-Type: application/json" \
+  -d '{"data": {"balance": 1000}, "baseHash": null}'
+
+# Pull — same headers required
+curl /pull/users/abc/vault \
+  -H "X-Encryption-Secret: my-secret-key" \
+  -H "X-Encryption-Salt: my-public-key"
+
+# Admin can decrypt by using the credentials shared by the user
+curl /pull/users/abc/vault \
+  -H "X-Encryption-Secret: my-secret-key" \
+  -H "X-Encryption-Salt: my-public-key"
+```
+
+The server never stores the encryption credentials — they must be provided on every request. Different credentials produce different keys, so only someone with the correct secret + salt can read the data.
 
 ### Bundles
 

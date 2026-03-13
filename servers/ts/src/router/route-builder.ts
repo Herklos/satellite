@@ -14,6 +14,7 @@ import {
   OP_WRITE,
   ENCRYPTION_IDENTITY,
   ENCRYPTION_SERVER,
+  ENCRYPTION_DELEGATED,
   ACTION_PULL,
   ACTION_PUSH,
   IDENTITY_PARAM,
@@ -21,6 +22,9 @@ import {
   QUERY_CHECKPOINT,
   HKDF_INFO_IDENTITY,
   HKDF_INFO_SERVER,
+  HKDF_INFO_DELEGATED,
+  HEADER_ENCRYPTION_SECRET,
+  HEADER_ENCRYPTION_SALT,
 } from "../constants.js"
 import type { AccessOperation } from "../constants.js"
 
@@ -164,7 +168,8 @@ function resolveStore(
   params: Record<string, string>,
   identity: string | undefined,
   opts: SyncRouterOptions,
-): IObjectStore {
+  req?: Request,
+): IObjectStore | Response {
   if (col.encryption === ENCRYPTION_IDENTITY) {
     if (!opts.encryptionSecret) throw new Error(`Collection "${col.name}" requires encryptionSecret`)
     const salt = identity ?? params[IDENTITY_KEY] ?? ""
@@ -183,6 +188,22 @@ function resolveStore(
       opts.serverEncryptionSecret,
       opts.serverIdentity,
       opts.serverEncryptionInfo ?? HKDF_INFO_SERVER,
+    )
+  }
+  if (col.encryption === ENCRYPTION_DELEGATED) {
+    const secret = req?.headers.get(HEADER_ENCRYPTION_SECRET)
+    const salt = req?.headers.get(HEADER_ENCRYPTION_SALT)
+    if (!secret || !salt) {
+      return Response.json(
+        { error: "Delegated encryption requires X-Encryption-Secret and X-Encryption-Salt headers" },
+        { status: 400 },
+      )
+    }
+    return new EncryptedObjectStore(
+      baseStore,
+      secret,
+      salt,
+      HKDF_INFO_DELEGATED,
     )
   }
   return baseStore
@@ -204,8 +225,9 @@ function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRout
       }
       const documentKey = resolveDocumentKey(col.storagePath, params)
       const identity = (c.get(IDENTITY_KEY) as string | undefined)
-      const store = resolveStore(col, opts.store, params, identity, opts)
-      return handleSyncPull(c, documentKey, store, col.forceFullFetch, col.clientEncrypted)
+      const storeOrError = resolveStore(col, opts.store, params, identity, opts, c.req.raw)
+      if (storeOrError instanceof Response) return storeOrError
+      return handleSyncPull(c, documentKey, storeOrError, col.forceFullFetch, col.clientEncrypted)
     }
 
     router.get(pullPath, compose(middlewares, handler))
@@ -230,8 +252,9 @@ function addCollectionRoutes(router: Hono, col: CollectionConfig, opts: SyncRout
       }
       const documentKey = resolveDocumentKey(col.storagePath, params)
       const identity = (c.get(IDENTITY_KEY) as string | undefined)
-      const store = resolveStore(col, opts.store, params, identity, opts)
-      return handleSyncPush(c, documentKey, store, identity, opts.signatureVerifier, col.clientEncrypted)
+      const storeOrError = resolveStore(col, opts.store, params, identity, opts, c.req.raw)
+      if (storeOrError instanceof Response) return storeOrError
+      return handleSyncPush(c, documentKey, storeOrError, identity, opts.signatureVerifier, col.clientEncrypted)
     }
 
     router.post(pushPath, compose(middlewares, handler))
@@ -254,7 +277,9 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
     }
     const baseKey = resolveDocumentKey(storagePath, params)
     const identity = (c.get(IDENTITY_KEY) as string | undefined)
-    const store = resolveStore(collections[0]!, opts.store, params, identity, opts)
+    const storeOrError = resolveStore(collections[0]!, opts.store, params, identity, opts, c.req.raw)
+    if (storeOrError instanceof Response) return storeOrError
+    const store = storeOrError
 
     const anyClientEncrypted = collections.some(c => c.clientEncrypted)
     const checkpointParam = c.req.query(QUERY_CHECKPOINT)
@@ -306,8 +331,9 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
       }
       const documentKey = `${resolveDocumentKey(storagePath, params)}/${col.name}`
       const identity = (c.get(IDENTITY_KEY) as string | undefined)
-      const store = resolveStore(col, opts.store, params, identity, opts)
-      return handleSyncPush(c, documentKey, store, identity, opts.signatureVerifier, col.clientEncrypted)
+      const storeOrError = resolveStore(col, opts.store, params, identity, opts, c.req.raw)
+      if (storeOrError instanceof Response) return storeOrError
+      return handleSyncPush(c, documentKey, storeOrError, identity, opts.signatureVerifier, col.clientEncrypted)
     }
 
     router.post(pushPath, compose(middlewares, handler))

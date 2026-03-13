@@ -6,9 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from satellite_server.constants import ENCRYPTION_NONE, ENCRYPTION_IDENTITY, ENCRYPTION_SERVER
+from satellite_server.constants import ENCRYPTION_NONE, ENCRYPTION_IDENTITY, ENCRYPTION_SERVER, ENCRYPTION_DELEGATED
 
-EncryptionMode = Literal["none", "identity", "server"]
+EncryptionMode = Literal["none", "identity", "server", "delegated"]
 
 
 class CollectionConfig(BaseModel):
