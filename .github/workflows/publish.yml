@@ -1,0 +1,49 @@
+name: Publish to GitHub Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@drakkar-software"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Set version and scope from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd packages/core
+          npm pkg set "name=@drakkar-software/satellite-core" "version=$VERSION"
+          cd ../../clients/ts
+          npm pkg set "name=@drakkar-software/satellite-client" "version=$VERSION"
+
+      - name: Publish @drakkar-software/satellite-core
+        working-directory: packages/core
+        run: pnpm publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish @drakkar-software/satellite-client
+        working-directory: clients/ts
+        run: pnpm publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

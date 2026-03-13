@@ -1,6 +1,14 @@
 {
   "name": "@satellite/core",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Drakkar-Software/satellite.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,6 +22,9 @@
       "import": "./dist/router/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
