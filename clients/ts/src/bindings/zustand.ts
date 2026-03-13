@@ -92,10 +92,17 @@ export function createSatelliteStore(
 ): StoreApi<SatelliteStore> {
   const { name, syncManager, storage } = options
 
+  // The 3rd argument (action name) is injected by the devtools middleware at
+  // runtime regardless of whether devtools is enabled.  We cast once here so
+  // every call site stays clean.
+  type NamedSet = (partial: Partial<SatelliteStore>, replace?: boolean, action?: string) => void
+
   const storeCreator = (
-    set: StoreApi<SatelliteStore>["setState"],
+    rawSet: StoreApi<SatelliteStore>["setState"],
     get: StoreApi<SatelliteStore>["getState"],
-  ): SatelliteStore => ({
+  ): SatelliteStore => {
+    const set = rawSet as NamedSet
+    return {
     // -- state --
     data: {},
     syncing: false,
@@ -137,7 +144,7 @@ export function createSatelliteStore(
       set({ online }, false, "setOnline")
       if (online && get().dirty) get().flush()
     },
-  })
+  }}
 
   // Build middleware chain:
   //   persist (optional) → subscribeWithSelector (always) → devtools (optional)
