@@ -320,122 +320,71 @@ Alternatively, if your polyfill patches `globalThis.crypto` (e.g., `react-native
 
 ### State Management with Zustand
 
-SyncManager focuses on sync logic only — no UI reactivity, no persistence. Use a state manager like [Zustand](https://github.com/pmndrs/zustand) to add reactive state, offline persistence, and offline-first writes on top.
+The client ships with a built-in [Zustand](https://github.com/pmndrs/zustand) binding that wires sync, persistence, and offline-first writes together. Install Zustand as a peer dependency:
 
-Create a dedicated store + SyncManager pair per collection using a factory function:
-
-#### Store factory
-
-```ts
-import { create, type StoreApi, useStore } from "zustand"
-import { persist, createJSONStorage } from "zustand/middleware"
-import AsyncStorage from "@react-native-async-storage/async-storage"
-import { SatelliteClient, SyncManager, type SyncManagerOptions } from "@satellite/client"
-
-interface SatelliteStore {
-  data: Record<string, unknown>
-  syncing: boolean
-  online: boolean
-  dirty: boolean
-  error: string | null
-  pull: () => Promise<void>
-  set: (modifier: (current: Record<string, unknown>) => Record<string, unknown>) => void
-  flush: () => Promise<void>
-  setOnline: (online: boolean) => void
-}
-
-function createSatelliteStore(
-  name: string,
-  syncManager: SyncManager,
-) {
-  return create<SatelliteStore>()(
-    persist(
-      (set, get) => ({
-        data: {},
-        syncing: false,
-        online: true,
-        dirty: false,
-        error: null,
-
-        pull: async () => {
-          set({ syncing: true, error: null })
-          try {
-            await syncManager.pull()
-            set({ data: syncManager.getData(), syncing: false })
-          } catch (err) {
-            set({ syncing: false, error: (err as Error).message })
-          }
-        },
-
-        set: (modifier) => {
-          const next = modifier(get().data)
-          set({ data: next, dirty: true })
-          if (get().online) get().flush()
-        },
-
-        flush: async () => {
-          if (get().syncing || !get().dirty) return
-          set({ syncing: true, error: null })
-          try {
-            await syncManager.push(get().data)
-            set({ data: syncManager.getData(), syncing: false, dirty: false })
-          } catch (err) {
-            set({ syncing: false, error: (err as Error).message })
-          }
-        },
-
-        setOnline: (online) => {
-          set({ online })
-          if (online && get().dirty) get().flush()
-        },
-      }),
-      {
-        name: `satellite-${name}`,
-        // Browser: uses localStorage by default
-        // React Native: use AsyncStorage
-        storage: createJSONStorage(() => AsyncStorage),
-        partialize: (state) => ({ data: state.data, dirty: state.dirty }),
-      },
-    ),
-  )
-}
+```bash
+npm install zustand
 ```
 
 #### Creating stores per collection
 
 ```ts
+import { SatelliteClient, SyncManager } from "@satellite/client"
+import { createSatelliteStore } from "@satellite/client/zustand"
+import AsyncStorage from "@react-native-async-storage/async-storage"
+
 const client = new SatelliteClient({
   baseUrl: "https://api.example.com/v1",
   auth: async () => ({ Authorization: `Bearer ${await getToken()}` }),
 })
 
-// One store + SyncManager per collection
-const useSettingsStore = createSatelliteStore(
-  "settings",
-  new SyncManager({
+// One store per collection — each syncs independently
+const settingsStore = createSatelliteStore({
+  name: "settings",
+  syncManager: new SyncManager({
     client,
     pullPath: "/pull/users/abc/settings",
     pushPath: "/push/users/abc/settings",
   }),
-)
+  // Browser: omit for localStorage (default)
+  // React Native: pass AsyncStorage
+  // No persistence: pass `false`
+  storage: AsyncStorage,
+})
 
-const useNotesStore = createSatelliteStore(
-  "notes",
-  new SyncManager({
+const notesStore = createSatelliteStore({
+  name: "notes",
+  syncManager: new SyncManager({
     client,
     pullPath: "/pull/users/abc/notes",
     pushPath: "/push/users/abc/notes",
     encryptionSecret: "user-secret",
     encryptionSalt: "user-abc",
   }),
-)
+})
 ```
 
-#### Usage in components
+Each store exposes the following state and actions:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data` | `Record<string, unknown>` | Current local data snapshot |
+| `syncing` | `boolean` | Whether a sync operation is in progress |
+| `online` | `boolean` | Whether the device is considered online |
+| `dirty` | `boolean` | Whether local data has un-pushed changes |
+| `error` | `string \| null` | Last sync error message |
+| `pull()` | `() => Promise<void>` | Pull remote state and merge into local |
+| `set(modifier)` | `(fn) => void` | Optimistic local write — instant, no network roundtrip |
+| `flush()` | `() => Promise<void>` | Push pending local changes to the server |
+| `setOnline(online)` | `(boolean) => void` | Update connectivity; auto-flushes when going online |
+
+#### Usage in React components
 
 ```tsx
+import { useStore } from "zustand"
+
 function Settings() {
-  const { data, syncing, pull, set } = useSettingsStore()
+  const { data, syncing, pull, set } = useStore(settingsStore)
   useEffect(() => { pull() }, [])
 
   return (
@@ -449,7 +398,7 @@ function Settings() {
 }
 
 function Notes() {
-  const { data, pull, set } = useNotesStore()
+  const { data, pull, set } = useStore(notesStore)
   useEffect(() => { pull() }, [])
 
   const notes = (data.items ?? []) as string[]
@@ -465,24 +414,29 @@ function Notes() {
     </>
   )
 }
+
+// Selectors — subscribe to specific fields to avoid re-renders
+function ThemeBadge() {
+  const theme = useStore(settingsStore, (s) => s.data.theme)
+  return <span>{theme as string}</span>
+}
 ```
 
 #### Connectivity listener
 
 ```ts
 // Browser
-function useOnlineStatus(...stores: StoreApi<SatelliteStore>[]) {
-  useEffect(() => {
-    const on = () => stores.forEach((s) => s.getState().setOnline(true))
-    const off = () => stores.forEach((s) => s.getState().setOnline(false))
-    window.addEventListener("online", on)
-    window.addEventListener("offline", off)
-    return () => {
-      window.removeEventListener("online", on)
-      window.removeEventListener("offline", off)
-    }
-  }, [stores])
-}
+useEffect(() => {
+  const stores = [settingsStore, notesStore]
+  const on = () => stores.forEach((s) => s.getState().setOnline(true))
+  const off = () => stores.forEach((s) => s.getState().setOnline(false))
+  window.addEventListener("online", on)
+  window.addEventListener("offline", off)
+  return () => {
+    window.removeEventListener("online", on)
+    window.removeEventListener("offline", off)
+  }
+}, [])
 
 // React Native: use @react-native-community/netinfo instead
 ```
@@ -491,8 +445,8 @@ This gives you:
 - **One store per collection** — each collection syncs, persists, and re-renders independently
 - **Offline-first** — writes apply instantly to local state and persist to disk; background sync pushes to server when online
 - **Automatic retry** — pending writes (`dirty: true`) flush when connectivity returns or on next app launch
-- **Selectors** — subscribe to specific fields to avoid unnecessary re-renders: `useSettingsStore(s => s.data.theme)`
-- **React Native support** — swap `localStorage` for `AsyncStorage`; use `@react-native-community/netinfo` for connectivity detection
+- **Selectors** — subscribe to specific fields to avoid unnecessary re-renders
+- **React Native support** — pass `AsyncStorage` as `storage`; use `@react-native-community/netinfo` for connectivity detection
 
 ## Storage Adapter
 
