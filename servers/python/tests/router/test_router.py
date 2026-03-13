@@ -187,107 +187,40 @@ def _build_delegated_app(
 
 
 @pytest.mark.asyncio
-async def test_delegated_encryption_requires_headers():
-    app, _ = _build_delegated_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/pull/users/user-1/vault")
-    assert resp.status_code == 400
-    assert "X-Encryption-Secret" in resp.json()["error"]
-
-
-@pytest.mark.asyncio
-async def test_delegated_encryption_push_pull_roundtrip():
-    app, _ = _build_delegated_app()
-    headers = {
-        "x-encryption-secret": "my-secret-key",
-        "x-encryption-salt": "my-public-key-abc123",
-        "content-type": "application/json",
-    }
+async def test_delegated_stores_data_as_is_no_server_encryption():
+    """Server stores delegated data in plaintext — encryption is client's job."""
+    app, store = _build_delegated_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         push_resp = await client.post(
             "/push/users/user-1/vault",
-            json={"data": {"balance": 1000}, "baseHash": None},
-            headers=headers,
+            json={"data": {"_encrypted": "client-encrypted-blob"}, "baseHash": None},
+            headers={"content-type": "application/json"},
         )
         assert push_resp.status_code == 200
-        push_hash = push_resp.json()["hash"]
 
-        pull_resp = await client.get(
-            "/pull/users/user-1/vault",
-            headers=headers,
-        )
+        pull_resp = await client.get("/pull/users/user-1/vault")
         assert pull_resp.status_code == 200
-        assert pull_resp.json()["data"] == {"balance": 1000}
-        assert pull_resp.json()["hash"] == push_hash
+        assert pull_resp.json()["data"] == {"_encrypted": "client-encrypted-blob"}
 
-
-@pytest.mark.asyncio
-async def test_delegated_encryption_different_credentials_cannot_decrypt():
-    app, store = _build_delegated_app()
-    headers_user = {
-        "x-encryption-secret": "user-secret",
-        "x-encryption-salt": "user-pubkey",
-        "content-type": "application/json",
-    }
-    headers_other = {
-        "x-encryption-secret": "other-secret",
-        "x-encryption-salt": "other-pubkey",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        await client.post(
-            "/push/users/user-1/vault",
-            json={"data": {"secret": "value"}, "baseHash": None},
-            headers=headers_user,
-        )
-        # Different credentials → decryption fails with InvalidTag
-        with pytest.raises(Exception):
-            await client.get(
-                "/pull/users/user-1/vault",
-                headers=headers_other,
-            )
-
-
-@pytest.mark.asyncio
-async def test_delegated_encryption_admin_can_decrypt_with_shared_credentials():
-    """Admin uses the same secret + salt the user shared with them."""
-    app, _ = _build_delegated_app()
-    shared_headers = {
-        "x-encryption-secret": "shared-secret",
-        "x-encryption-salt": "user-public-key",
-        "content-type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # User pushes with their credentials
-        await client.post(
-            "/push/users/user-1/vault",
-            json={"data": {"sensitive": "data"}, "baseHash": None},
-            headers=shared_headers,
-        )
-        # Same credentials (shared with admin) can decrypt
-        resp = await client.get(
-            "/pull/users/user-1/vault",
-            headers=shared_headers,
-        )
-    assert resp.status_code == 200
-    assert resp.json()["data"] == {"sensitive": "data"}
-
-
-@pytest.mark.asyncio
-async def test_delegated_data_encrypted_at_rest():
-    app, store = _build_delegated_app()
-    headers = {
-        "x-encryption-secret": "my-secret",
-        "x-encryption-salt": "my-pubkey",
-        "content-type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        await client.post(
-            "/push/users/user-1/vault",
-            json={"data": {"password": "hunter2"}, "baseHash": None},
-            headers=headers,
-        )
-    # Check raw storage — data should be encrypted
+    # Raw storage contains the data as-is (no server-side encryption)
+    import json
     raw = await store.get_string("users/user-1/vault")
     assert raw is not None
-    assert "hunter2" not in raw
-    assert "password" not in raw
+    doc = json.loads(raw)
+    assert doc["data"]["_encrypted"] == "client-encrypted-blob"
+
+
+@pytest.mark.asyncio
+async def test_delegated_skips_incremental_sync():
+    """Delegated mode implies clientEncrypted — checkpoint is ignored."""
+    app, _ = _build_delegated_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/push/users/user-1/vault",
+            json={"data": {"_encrypted": "blob1"}, "baseHash": None},
+            headers={"content-type": "application/json"},
+        )
+        # With checkpoint, should still return full data (not filtered)
+        resp = await client.get("/pull/users/user-1/vault?checkpoint=0")
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {"_encrypted": "blob1"}

@@ -196,14 +196,11 @@ createSyncRouter({
 - **`"none"`** — stored in plaintext
 - **`"identity"`** — encrypted per-user with HKDF(secret, identity). Only the user can read their data.
 - **`"server"`** — encrypted with a server-wide key. All server code can read; clients cannot read raw storage.
-- **`"delegated"`** — encrypted with user-provided credentials passed via headers. The user generates a secret and uses their public key as salt. They can share both with an admin to grant decryption access.
+- **`"delegated"`** — client-side encryption. The server stores opaque encrypted data without decrypting it. The user generates a secret key, encrypts client-side using their public key as salt, and can share the secret + public key with an admin to grant decryption access. Implicitly disables incremental sync (server can't parse encrypted content).
 
 #### Delegated encryption
 
-With `"delegated"` mode, the encryption key is derived from credentials the user provides on each request via headers:
-
-- `X-Encryption-Secret` — the user's secret key
-- `X-Encryption-Salt` — the user's public key (used as HKDF salt)
+With `"delegated"` mode, the server never encrypts or decrypts — it stores whatever the client sends as-is. The client handles all encryption using the SDK's built-in AES-256-GCM + HKDF support:
 
 ```json
 {
@@ -216,26 +213,36 @@ With `"delegated"` mode, the encryption key is derived from credentials the user
 }
 ```
 
-```bash
-# Push with delegated encryption
-curl -X POST /push/users/abc/vault \
-  -H "X-Encryption-Secret: my-secret-key" \
-  -H "X-Encryption-Salt: my-public-key" \
-  -H "Content-Type: application/json" \
-  -d '{"data": {"balance": 1000}, "baseHash": null}'
+```python
+from satellite_sdk import SyncManager
 
-# Pull — same headers required
-curl /pull/users/abc/vault \
-  -H "X-Encryption-Secret: my-secret-key" \
-  -H "X-Encryption-Salt: my-public-key"
+# User encrypts client-side with their secret + public key as salt
+sync = SyncManager(
+    client,
+    pull_path="/pull/users/abc/vault",
+    push_path="/push/users/abc/vault",
+    encryption_secret="my-secret-key",       # user-generated secret
+    encryption_salt="my-public-key-abc123",   # user's public key
+)
 
-# Admin can decrypt by using the credentials shared by the user
-curl /pull/users/abc/vault \
-  -H "X-Encryption-Secret: my-secret-key" \
-  -H "X-Encryption-Salt: my-public-key"
+# Data is encrypted before push, decrypted after pull
+await sync.push({"balance": 1000})
+await sync.pull()  # returns decrypted data
 ```
 
-The server never stores the encryption credentials — they must be provided on every request. Different credentials produce different keys, so only someone with the correct secret + salt can read the data.
+```ts
+// Admin decrypts using the credentials shared by the user
+const adminSync = new SyncManager({
+  client,
+  pullPath: "/pull/users/abc/vault",
+  pushPath: "/push/users/abc/vault",
+  encryptionSecret: "my-secret-key",       // shared by user
+  encryptionSalt: "my-public-key-abc123",  // shared by user
+})
+await adminSync.pull()  // decrypts with the shared credentials
+```
+
+The server stores only the encrypted blob. Anyone with the correct secret + public key can decrypt client-side.
 
 ### Bundles
 

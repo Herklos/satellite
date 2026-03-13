@@ -27,11 +27,6 @@ QUERY_CHECKPOINT = "checkpoint"
 HKDF_INFO_DEFAULT = "satellite-data"
 HKDF_INFO_IDENTITY = "satellite-identity-data"
 HKDF_INFO_SERVER = "satellite-server-data"
-HKDF_INFO_DELEGATED = "satellite-delegated-data"
-
-# Delegated encryption headers
-HEADER_ENCRYPTION_SECRET = "x-encryption-secret"
-HEADER_ENCRYPTION_SALT = "x-encryption-salt"
 
 # Config
 DEFAULT_CONFIG_KEY = "__sync__/config.json"

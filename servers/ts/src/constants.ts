@@ -41,11 +41,6 @@ export const QUERY_CHECKPOINT = "checkpoint"
 export const HKDF_INFO_DEFAULT = "satellite-data"
 export const HKDF_INFO_IDENTITY = "satellite-identity-data"
 export const HKDF_INFO_SERVER = "satellite-server-data"
-export const HKDF_INFO_DELEGATED = "satellite-delegated-data"
-
-// Delegated encryption headers
-export const HEADER_ENCRYPTION_SECRET = "x-encryption-secret"
-export const HEADER_ENCRYPTION_SALT = "x-encryption-salt"
 
 // ── Config ───────────────────────────────────────────────────────────────
 
