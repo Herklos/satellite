@@ -17,14 +17,14 @@ def stable_stringify(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
-        return json.dumps(value)
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, str):
-        return json.dumps(value)
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list):
         return "[" + ",".join(stable_stringify(v) for v in value) + "]"
     if isinstance(value, dict):
         keys = sorted(value.keys())
-        pairs = [json.dumps(k) + ":" + stable_stringify(value[k]) for k in keys]
+        pairs = [json.dumps(k, ensure_ascii=False) + ":" + stable_stringify(value[k]) for k in keys]
         return "{" + ",".join(pairs) + "}"
     return "null"
 

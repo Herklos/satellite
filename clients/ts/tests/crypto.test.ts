@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { createEncryptor, ENCRYPTED_KEY } from "../src/crypto.js"
+import vectors from "../../test-vectors/crypto.json"
 
 describe("Encryptor", () => {
   it("round-trips data through encrypt/decrypt", async () => {
@@ -49,4 +50,16 @@ describe("Encryptor", () => {
     const decrypted = await enc.decrypt(encrypted)
     expect(decrypted).toEqual(data)
   })
+})
+
+describe("Encryptor (test vectors)", () => {
+  const enc = createEncryptor(vectors.secret, vectors.salt)
+
+  for (const vector of vectors.vectors) {
+    it(`decrypts ${JSON.stringify(vector.plaintext).slice(0, 60)}`, async () => {
+      const wrapper = { [ENCRYPTED_KEY]: vector.encrypted }
+      const decrypted = await enc.decrypt(wrapper)
+      expect(decrypted).toEqual(vector.plaintext)
+    })
+  }
 })

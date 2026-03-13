@@ -15,7 +15,40 @@
     { "input": { "emoji": "🔥", "accent": "café", "jp": "日本語" }, "expected": "{\"accent\":\"café\",\"emoji\":\"🔥\",\"jp\":\"日本語\"}" },
     { "input": { "big": 999999999999, "pi": 3.14159, "neg": -42, "zero": 0 }, "expected": "{\"big\":999999999999,\"neg\":-42,\"pi\":3.14159,\"zero\":0}" },
     { "input": { "d": { "c": { "b": { "a": 1 } } } }, "expected": "{\"d\":{\"c\":{\"b\":{\"a\":1}}}}" },
-    { "input": { "items": [{ "z": { "y": 1 }, "a": 2 }, null, [3, 4]] }, "expected": "{\"items\":[{\"a\":2,\"z\":{\"y\":1}},null,[3,4]]}" }
+    { "input": { "items": [{ "z": { "y": 1 }, "a": 2 }, null, [3, 4]] }, "expected": "{\"items\":[{\"a\":2,\"z\":{\"y\":1}},null,[3,4]]}" },
+    { "input": 0, "expected": "0" },
+    { "input": 10000000000, "expected": "10000000000" },
+    { "input": 0.1, "expected": "0.1" },
+    { "input": { "z": 1, "y": 2, "x": 3, "w": 4, "v": 5 }, "expected": "{\"v\":5,\"w\":4,\"x\":3,\"y\":2,\"z\":1}" },
+    { "input": [[1, 2], [3, 4], [5, [6, 7]]], "expected": "[[1,2],[3,4],[5,[6,7]]]" },
+    { "input": { "a": null, "b": [null, true, false, null], "c": { "d": null, "e": false } }, "expected": "{\"a\":null,\"b\":[null,true,false,null],\"c\":{\"d\":null,\"e\":false}}" },
+    { "input": { "1": "one", "2": "two", "10": "ten", "20": "twenty" }, "expected": "{\"1\":\"one\",\"10\":\"ten\",\"2\":\"two\",\"20\":\"twenty\"}" },
+    {
+      "input": {
+        "meta": { "version": 3, "stable": true },
+        "data": [
+          { "id": "a", "values": [1, 2.5, null, "text", false] },
+          { "id": "b", "values": [], "nested": { "deep": { "deeper": { "deepest": 42 } } } }
+        ],
+        "empty": {},
+        "tags": ["alpha", "beta"]
+      },
+      "expected": "{\"data\":[{\"id\":\"a\",\"values\":[1,2.5,null,\"text\",false]},{\"id\":\"b\",\"nested\":{\"deep\":{\"deeper\":{\"deepest\":42}}},\"values\":[]}],\"empty\":{},\"meta\":{\"stable\":true,\"version\":3},\"tags\":[\"alpha\",\"beta\"]}"
+    },
+    { "input": { "path": "C:\\Users\\file.txt", "tab": "col1\tcol2", "newline": "line1\nline2", "slash": "/" }, "expected": "{\"newline\":\"line1\\nline2\",\"path\":\"C:\\\\Users\\\\file.txt\",\"slash\":\"/\",\"tab\":\"col1\\tcol2\"}" },
+    { "input": [{}], "expected": "[{}]" },
+    { "input": { "a": [] }, "expected": "{\"a\":[]}" },
+    {
+      "input": {
+        "orders": [
+          { "sym": "BTC/USD", "side": "buy", "qty": 0.001, "px": 42000.5, "type": "limit", "tif": "GTC" },
+          { "sym": "ETH/USD", "side": "sell", "qty": 10, "px": 2200, "type": "market", "tif": "IOC" }
+        ],
+        "portfolio": { "BTC": 1.5, "ETH": 20, "USD": 50000 },
+        "risk": { "max_drawdown": 0.1, "leverage": 3, "margin_call": false }
+      },
+      "expected": "{\"orders\":[{\"px\":42000.5,\"qty\":0.001,\"side\":\"buy\",\"sym\":\"BTC/USD\",\"tif\":\"GTC\",\"type\":\"limit\"},{\"px\":2200,\"qty\":10,\"side\":\"sell\",\"sym\":\"ETH/USD\",\"tif\":\"IOC\",\"type\":\"market\"}],\"portfolio\":{\"BTC\":1.5,\"ETH\":20,\"USD\":50000},\"risk\":{\"leverage\":3,\"margin_call\":false,\"max_drawdown\":0.1}}"
+    }
   ],
   "computeHash": [
     {
@@ -42,6 +75,31 @@
       "input": { "d": { "c": { "b": { "a": 1 } } } },
       "stableJson": "{\"d\":{\"c\":{\"b\":{\"a\":1}}}}",
       "expectedHash": "6208c56886525e136f8c62d1a5a08b6960cbd6411904c5f13317a82084319c12"
+    },
+    {
+      "input": { "orders": [{ "sym": "BTC/USD", "side": "buy", "qty": 0.001, "px": 42000.5 }], "ts": 1700000000 },
+      "stableJson": "{\"orders\":[{\"px\":42000.5,\"qty\":0.001,\"side\":\"buy\",\"sym\":\"BTC/USD\"}],\"ts\":1700000000}",
+      "expectedHash": "cf314095d3b24d4e3d01f9fddf1d9eab054560476c125b217fdcc3c32568f0b1"
+    },
+    {
+      "input": { "matrix": [[1, 0], [0, 1]], "det": 1, "trace": 2 },
+      "stableJson": "{\"det\":1,\"matrix\":[[1,0],[0,1]],\"trace\":2}",
+      "expectedHash": "e8e1781f223cd1cf6c8758ad8f4209e66ba88a3558d7fb24fd870c0b701f3266"
+    },
+    {
+      "input": { "a": { "b": { "c": { "d": { "e": { "f": "deep" } } } } } },
+      "stableJson": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":\"deep\"}}}}}}",
+      "expectedHash": "c7ed96589471ce82b5f5a40fd692d309c328522d560dcbbcb6704c01ff7029f3"
+    },
+    {
+      "input": { "users": [{ "id": 1, "name": "Alice", "active": true }, { "id": 2, "name": "Bob", "active": false }], "count": 2 },
+      "stableJson": "{\"count\":2,\"users\":[{\"active\":true,\"id\":1,\"name\":\"Alice\"},{\"active\":false,\"id\":2,\"name\":\"Bob\"}]}",
+      "expectedHash": "a8d5b773d5ee36558333a008298d0304ff41d20eca626bb600b3c26965472106"
+    },
+    {
+      "input": { "empty_arr": [], "empty_obj": {}, "null_val": null, "zero": 0, "false_val": false, "empty_str": "" },
+      "stableJson": "{\"empty_arr\":[],\"empty_obj\":{},\"empty_str\":\"\",\"false_val\":false,\"null_val\":null,\"zero\":0}",
+      "expectedHash": "d41ed8678ba5c77f9c9bb8a457b4e796942fed3eb34f4fd7e9ca738e41b4fa7b"
     }
   ]
 }

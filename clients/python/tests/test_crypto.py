@@ -1,6 +1,15 @@
 """Tests for client-side encryption."""
 
+import json
+import pathlib
+
+import pytest
+
 from satellite_sdk.crypto import Encryptor, ENCRYPTED_KEY
+
+
+VECTORS_PATH = pathlib.Path(__file__).parent.parent.parent / "test-vectors" / "crypto.json"
+VECTORS = json.loads(VECTORS_PATH.read_text())
 
 
 def test_round_trip():
@@ -56,3 +65,11 @@ def test_custom_info():
     encrypted = enc.encrypt(data)
     decrypted = enc.decrypt(encrypted)
     assert decrypted == data
+
+
+@pytest.mark.parametrize("vector", VECTORS["vectors"], ids=lambda v: str(v["plaintext"])[:60])
+def test_decrypt_vector(vector):
+    enc = Encryptor(VECTORS["secret"], VECTORS["salt"])
+    wrapper = {ENCRYPTED_KEY: vector["encrypted"]}
+    decrypted = enc.decrypt(wrapper)
+    assert decrypted == vector["plaintext"]
