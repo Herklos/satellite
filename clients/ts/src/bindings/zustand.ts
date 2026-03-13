@@ -1,5 +1,12 @@
 import { createStore, type StoreApi } from "zustand/vanilla"
-import { persist, createJSONStorage, type StateStorage } from "zustand/middleware"
+import {
+  persist,
+  devtools,
+  subscribeWithSelector,
+  createJSONStorage,
+  type StateStorage,
+  type DevtoolsOptions,
+} from "zustand/middleware"
 import type { SyncManager } from "../sync.js"
 
 // ---------------------------------------------------------------------------
@@ -49,7 +56,32 @@ export interface CreateSatelliteStoreOptions {
    * - **None**: pass `false` to disable persistence entirely.
    */
   storage?: StateStorage | false
+  /**
+   * Enable Redux DevTools integration.
+   *
+   * - `true` — enable with default options (store name = `satellite-{name}`).
+   * - `DevtoolsOptions` — enable with custom options.
+   * - `false` / omit — disabled.
+   */
+  devtools?: boolean | DevtoolsOptions
+  /**
+   * Pass `produce` from `immer` to enable draft-based mutations in `set()`.
+   *
+   * When provided, the modifier passed to `set()` can mutate its argument:
+   * ```ts
+   * store.getState().set((draft) => { draft.theme = "dark" })
+   * ```
+   *
+   * The existing return-new-object pattern still works:
+   * ```ts
+   * store.getState().set((d) => ({ ...d, theme: "dark" }))
+   * ```
+   */
+  produce?: <T>(base: T, recipe: (draft: T) => T | void) => T
 }
+
+// Re-export DevtoolsOptions for convenience
+export type { DevtoolsOptions }
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -73,51 +105,63 @@ export function createSatelliteStore(
 
     // -- actions --
     pull: async () => {
-      set({ syncing: true, error: null })
+      set({ syncing: true, error: null }, false, "pull/start")
       try {
         await syncManager.pull()
-        set({ data: syncManager.getData(), syncing: false })
+        set({ data: syncManager.getData(), syncing: false }, false, "pull/success")
       } catch (err) {
-        set({ syncing: false, error: (err as Error).message })
+        set({ syncing: false, error: (err as Error).message }, false, "pull/error")
       }
     },
 
     set: (modifier) => {
-      const next = modifier(get().data)
-      set({ data: next, dirty: true })
+      const next = options.produce
+        ? options.produce(get().data, modifier as (draft: Record<string, unknown>) => Record<string, unknown> | void)
+        : modifier(get().data)
+      set({ data: next, dirty: true }, false, "set")
       if (get().online) get().flush()
     },
 
     flush: async () => {
       if (get().syncing || !get().dirty) return
-      set({ syncing: true, error: null })
+      set({ syncing: true, error: null }, false, "flush/start")
       try {
         await syncManager.push(get().data)
-        set({ data: syncManager.getData(), syncing: false, dirty: false })
+        set({ data: syncManager.getData(), syncing: false, dirty: false }, false, "flush/success")
       } catch (err) {
-        set({ syncing: false, error: (err as Error).message })
+        set({ syncing: false, error: (err as Error).message }, false, "flush/error")
       }
     },
 
     setOnline: (online) => {
-      set({ online })
+      set({ online }, false, "setOnline")
       if (online && get().dirty) get().flush()
     },
   })
 
-  // No persistence requested
-  if (storage === false) {
-    return createStore<SatelliteStore>()(storeCreator)
+  // Build middleware chain:
+  //   persist (optional) → subscribeWithSelector (always) → devtools (optional)
+
+  const withPersist = storage === false
+    ? storeCreator
+    : persist(storeCreator, {
+        name: `satellite-${name}`,
+        storage: storage ? createJSONStorage(() => storage) : undefined,
+        partialize: (state) => ({
+          data: state.data,
+          dirty: state.dirty,
+        }),
+      })
+
+  const withSelector = subscribeWithSelector(withPersist)
+
+  if (options.devtools) {
+    const devtoolsOpts: DevtoolsOptions =
+      typeof options.devtools === "object"
+        ? options.devtools
+        : { name: `satellite-${name}` }
+    return createStore<SatelliteStore>()(devtools(withSelector, devtoolsOpts))
   }
 
-  return createStore<SatelliteStore>()(
-    persist(storeCreator, {
-      name: `satellite-${name}`,
-      storage: storage ? createJSONStorage(() => storage) : undefined,
-      partialize: (state) => ({
-        data: state.data,
-        dirty: state.dirty,
-      }),
-    }),
-  )
+  return createStore<SatelliteStore>()(withSelector)
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+import { produce } from "immer"
 import { SatelliteClient } from "../src/client.js"
 import { SyncManager } from "../src/sync.js"
 import { createSatelliteStore } from "../src/bindings/zustand.js"
@@ -171,5 +172,205 @@ describe("createSatelliteStore", () => {
 
     expect(values.length).toBeGreaterThanOrEqual(1)
     expect(values).toContainEqual({ a: 1 })
+  })
+})
+
+describe("subscribeWithSelector", () => {
+  it("subscribe with selector only fires on selected slice changes", async () => {
+    const pushFn = vi.fn(async () => ({ hash: "h1", timestamp: 100 }))
+    const client = mockClient({ push: pushFn })
+    const syncManager = new SyncManager({
+      client,
+      pullPath: "/pull/test",
+      pushPath: "/push/test",
+    })
+
+    const store = createSatelliteStore({
+      name: "selector-test",
+      syncManager,
+      storage: false,
+    })
+
+    const dataSnapshots: Record<string, unknown>[] = []
+
+    // Subscribe to only the `data` slice
+    store.subscribe(
+      (state) => state.data,
+      (data) => { dataSnapshots.push(data) },
+    )
+
+    // Change data — should fire
+    store.getState().set((d) => ({ ...d, x: 1 }))
+    expect(dataSnapshots).toContainEqual({ x: 1 })
+
+    const countBeforeOnline = dataSnapshots.length
+
+    // Change online status — should NOT fire the data listener
+    store.getState().setOnline(false)
+    expect(dataSnapshots.length).toBe(countBeforeOnline)
+  })
+
+  it("subscribe with equality function controls notifications", () => {
+    const { store } = createTestStore()
+    const calls: boolean[] = []
+
+    // Subscribe to dirty flag with custom equality
+    store.subscribe(
+      (state) => state.dirty,
+      (dirty) => { calls.push(dirty) },
+      { equalityFn: Object.is },
+    )
+
+    // Set dirty to true (initial is false) — should fire
+    store.getState().set((d) => ({ ...d, a: 1 }))
+    expect(calls).toContain(true)
+  })
+})
+
+describe("devtools", () => {
+  it("creates store without error when devtools is true", () => {
+    const client = mockClient()
+    const syncManager = new SyncManager({
+      client,
+      pullPath: "/pull/test",
+      pushPath: "/push/test",
+    })
+
+    const store = createSatelliteStore({
+      name: "devtools-test",
+      syncManager,
+      storage: false,
+      devtools: true,
+    })
+
+    expect(store.getState().data).toEqual({})
+  })
+
+  it("creates store with custom devtools options", () => {
+    const client = mockClient()
+    const syncManager = new SyncManager({
+      client,
+      pullPath: "/pull/test",
+      pushPath: "/push/test",
+    })
+
+    const store = createSatelliteStore({
+      name: "devtools-custom",
+      syncManager,
+      storage: false,
+      devtools: { name: "My Custom Store", enabled: false },
+    })
+
+    expect(store.getState().data).toEqual({})
+  })
+
+  it("all actions still work with devtools enabled", async () => {
+    const pushFn = vi.fn(async () => ({ hash: "h1", timestamp: 100 }))
+    const client = mockClient({ push: pushFn })
+    const syncManager = new SyncManager({
+      client,
+      pullPath: "/pull/test",
+      pushPath: "/push/test",
+    })
+
+    const store = createSatelliteStore({
+      name: "devtools-actions",
+      syncManager,
+      storage: false,
+      devtools: true,
+    })
+
+    // pull
+    await store.getState().pull()
+    expect(store.getState().data).toEqual({ key: "value" })
+
+    // set + flush
+    store.getState().set((d) => ({ ...d, extra: true }))
+    await vi.waitFor(() => {
+      expect(pushFn).toHaveBeenCalled()
+    })
+  })
+})
+
+describe("produce option (immer)", () => {
+  function createImmerStore(clientOverrides?: Parameters<typeof mockClient>[0]) {
+    const client = mockClient(clientOverrides)
+    const syncManager = new SyncManager({
+      client,
+      pullPath: "/pull/test",
+      pushPath: "/push/test",
+    })
+
+    const store = createSatelliteStore({
+      name: "immer-test",
+      syncManager,
+      storage: false,
+      produce,
+    })
+
+    return { store, client, syncManager }
+  }
+
+  it("supports draft-based mutations", () => {
+    const pushFn = vi.fn(async () => ({ hash: "h1", timestamp: 100 }))
+    const { store } = createImmerStore({ push: pushFn })
+
+    // Mutate draft — immer produces a new immutable object
+    store.getState().set((draft) => { draft.theme = "dark" })
+
+    expect(store.getState().data).toEqual({ theme: "dark" })
+    expect(store.getState().dirty).toBe(true)
+  })
+
+  it("still supports return-new-object pattern", () => {
+    const pushFn = vi.fn(async () => ({ hash: "h1", timestamp: 100 }))
+    const { store } = createImmerStore({ push: pushFn })
+
+    // Return new object — immer handles this too
+    store.getState().set((d) => ({ ...d, lang: "fr" }))
+
+    expect(store.getState().data).toEqual({ lang: "fr" })
+  })
+
+  it("handles nested draft mutations", () => {
+    const pushFn = vi.fn(async () => ({ hash: "h1", timestamp: 100 }))
+    const { store } = createImmerStore({ push: pushFn })
+
+    // Set initial nested data
+    store.getState().set((d) => ({ ...d, prefs: { color: "red", size: 12 } }))
+
+    // Mutate nested property via draft
+    store.getState().set((draft) => {
+      (draft.prefs as Record<string, unknown>).color = "blue"
+    })
+
+    expect(store.getState().data).toEqual({ prefs: { color: "blue", size: 12 } })
+  })
+
+  it("produce function is called for every set()", () => {
+    const mockProduce = vi.fn((base, recipe) => {
+      const result = recipe({ ...base })
+      return result ?? base
+    })
+
+    const client = mockClient({ push: vi.fn(async () => ({ hash: "h1", timestamp: 100 })) })
+    const syncManager = new SyncManager({
+      client,
+      pullPath: "/pull/test",
+      pushPath: "/push/test",
+    })
+
+    const store = createSatelliteStore({
+      name: "mock-produce",
+      syncManager,
+      storage: false,
+      produce: mockProduce,
+    })
+
+    store.getState().set((d) => ({ ...d, x: 1 }))
+    expect(mockProduce).toHaveBeenCalledTimes(1)
+
+    store.getState().set((d) => ({ ...d, y: 2 }))
+    expect(mockProduce).toHaveBeenCalledTimes(2)
   })
 })

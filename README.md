@@ -324,6 +324,8 @@ The client ships with a built-in [Zustand](https://github.com/pmndrs/zustand) bi
 
 ```bash
 npm install zustand
+# Optional: for draft-based mutations
+npm install immer
 ```
 
 #### Creating stores per collection
@@ -441,11 +443,62 @@ useEffect(() => {
 // React Native: use @react-native-community/netinfo instead
 ```
 
+#### Middleware options
+
+**Redux DevTools** — opt-in with `devtools: true` for time-travel debugging. All actions are labeled (`pull/start`, `pull/success`, `set`, `flush/start`, etc.):
+
+```ts
+const settingsStore = createSatelliteStore({
+  name: "settings",
+  syncManager,
+  devtools: true,
+  // Or with custom options:
+  // devtools: { name: "Settings Store", enabled: process.env.NODE_ENV !== "production" },
+})
+```
+
+**Immer** — pass `produce` from `immer` to enable draft-based mutations in `set()`:
+
+```ts
+import { produce } from "immer"
+
+const settingsStore = createSatelliteStore({
+  name: "settings",
+  syncManager,
+  produce,
+})
+
+// Draft mutation style — mutate in place, immer handles immutability
+settingsStore.getState().set((draft) => { draft.theme = "dark" })
+
+// Return-new-object style still works
+settingsStore.getState().set((d) => ({ ...d, theme: "dark" }))
+```
+
+**subscribeWithSelector** — always enabled. Subscribe to specific state slices with an equality function:
+
+```ts
+// Only fires when `data` changes, not when `syncing` toggles
+settingsStore.subscribe(
+  (state) => state.data,
+  (data) => console.log("data changed:", data),
+)
+
+// With custom equality
+settingsStore.subscribe(
+  (state) => state.data.theme,
+  (theme) => console.log("theme:", theme),
+  { equalityFn: Object.is },
+)
+```
+
 This gives you:
 - **One store per collection** — each collection syncs, persists, and re-renders independently
 - **Offline-first** — writes apply instantly to local state and persist to disk; background sync pushes to server when online
 - **Automatic retry** — pending writes (`dirty: true`) flush when connectivity returns or on next app launch
 - **Selectors** — subscribe to specific fields to avoid unnecessary re-renders
+- **DevTools** — opt-in Redux DevTools integration with labeled actions
+- **Immer** — optional draft-based mutations for simpler deeply-nested updates
 - **React Native support** — pass `AsyncStorage` as `storage`; use `@react-native-community/netinfo` for connectivity detection
 
 ## Storage Adapter

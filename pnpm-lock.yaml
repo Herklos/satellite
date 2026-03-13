@@ -20,6 +20,9 @@ importers:
       hono:
         specifier: ^4.12.7
         version: 4.12.7
+      immer:
+        specifier: ^11.1.4
+        version: 11.1.4
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -28,7 +31,7 @@ importers:
         version: 3.2.4
       zustand:
         specifier: ^5.0.11
-        version: 5.0.11
+        version: 5.0.11(immer@11.1.4)
 
   packages/core:
     dependencies:
@@ -457,6 +460,9 @@ packages:
   hono@4.12.7:
     resolution: {integrity: sha512-jq9l1DM0zVIvsm3lv9Nw9nlJnMNPOcAtsbsgiUhWcFzPE99Gvo6yRTlszSLLYacMeQ6quHD6hMfId8crVHvexw==}
     engines: {node: '>=16.9.0'}
+
+  immer@11.1.4:
+    resolution: {integrity: sha512-XREFCPo6ksxVzP4E0ekD5aMdf8WMwmdNaz6vuvxgI40UaEiu6q3p8X52aU6GdyvLY3XXX/8R7JOTXStz/nBbRw==}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -916,6 +922,8 @@ snapshots:
 
   hono@4.12.7: {}
 
+  immer@11.1.4: {}
+
   js-tokens@9.0.1: {}
 
   loupe@3.2.1: {}
@@ -1080,4 +1088,6 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zustand@5.0.11: {}
+  zustand@5.0.11(immer@11.1.4):
+    optionalDependencies:
+      immer: 11.1.4

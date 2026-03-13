@@ -6,6 +6,7 @@
  * which is wired directly to the Hono router (no TCP needed).
  */
 import { describe, it, expect, beforeEach } from "vitest"
+import { produce } from "immer"
 import { Hono } from "hono"
 import { createSyncRouter } from "@satellite/core/router"
 import type { SyncConfig } from "@satellite/core"
@@ -534,5 +535,40 @@ describe("e2e: Zustand store", () => {
     // Pull to get server-confirmed state
     await store.getState().pull()
     expect(store.getState().data).toEqual({ lang: "de" })
+  })
+
+  it("immer draft mutations round-trip to server", async () => {
+    const { client } = createTestEnv()
+
+    const store = createSatelliteStore({
+      name: "e2e-immer",
+      syncManager: new SyncManager({
+        client,
+        pullPath: "/pull/users/user-1/settings",
+        pushPath: "/push/users/user-1/settings",
+      }),
+      storage: false,
+      produce,
+    })
+
+    // Draft mutation style
+    store.getState().set((draft) => { draft.theme = "dark" })
+    expect(store.getState().data).toEqual({ theme: "dark" })
+
+    // Wait for flush
+    await new Promise<void>((resolve) => {
+      const unsub = store.subscribe((s) => {
+        if (!s.dirty && !s.syncing) { unsub(); resolve() }
+      })
+    })
+
+    // Verify server has the data
+    const verify = new SyncManager({
+      client,
+      pullPath: "/pull/users/user-1/settings",
+      pushPath: "/push/users/user-1/settings",
+    })
+    await verify.pull()
+    expect(verify.getData()).toEqual({ theme: "dark" })
   })
 })
