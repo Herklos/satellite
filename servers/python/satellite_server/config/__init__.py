@@ -7,7 +7,12 @@ from satellite_server.config.schema import (
     EncryptionMode,
 )
 from satellite_server.config.validate import validate_config
-from satellite_server.config.loader import load_config, save_config
+from satellite_server.config.loader import (
+    load_config,
+    save_config,
+    parse_config_json,
+    load_config_file,
+)
 
 __all__ = [
     "SyncConfig",
@@ -17,4 +22,6 @@ __all__ = [
     "validate_config",
     "load_config",
     "save_config",
+    "parse_config_json",
+    "load_config_file",
 ]

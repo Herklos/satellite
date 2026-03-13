@@ -95,6 +95,14 @@ store = S3ObjectStore(S3StorageOptions(
 
 config = await load_config(store)
 
+# Or load config from a JSON file instead of storage:
+# from satellite_server import load_config_file
+# config = load_config_file("config.json")
+
+# Or parse a JSON string directly:
+# from satellite_server import parse_config_json
+# config = parse_config_json('{"version": 1, "collections": [...]}')
+
 async def role_resolver(request):
     user = await verify_token(request.headers.get("authorization"))
     return AuthResult(identity=user.id, roles=user.roles)
@@ -127,6 +135,27 @@ Documents are synced using a pull/push model with hash-based optimistic concurre
 - Per-key timestamps track which fields changed when
 
 ## Config
+
+Configuration can be loaded from multiple sources (Python server):
+
+```python
+# 1. From object storage (async — stored at __sync__/config.json)
+config = await load_config(store)
+
+# 2. From a JSON file on disk
+from satellite_server import load_config_file
+config = load_config_file("config.json")
+
+# 3. From a JSON string
+from satellite_server import parse_config_json
+config = parse_config_json('{"version": 1, "collections": [...]}')
+
+# 4. From Python objects directly
+from satellite_server import SyncConfig, CollectionConfig
+config = SyncConfig(version=1, collections=[
+    CollectionConfig(name="notes", storagePath="users/{identity}/notes", ...),
+])
+```
 
 Collection configuration is stored **inside the storage** at `__sync__/config.json`. Each collection defines:
 

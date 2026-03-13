@@ -1,14 +1,38 @@
-"""Load and save sync configuration from/to object storage."""
+"""Load and save sync configuration from/to object storage or JSON."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from satellite_server.interfaces import IObjectStore
 from satellite_server.config.schema import SyncConfig
 from satellite_server.config.validate import validate_config
 from satellite_server.errors import StartupError
 from satellite_server.constants import DEFAULT_CONFIG_KEY, CONTENT_TYPE_JSON
+
+
+def parse_config_json(raw: str) -> SyncConfig:
+    """Parse and validate a SyncConfig from a JSON string.
+
+    Accepts camelCase keys (e.g. ``storagePath``) as used in JSON config files.
+
+    Raises :class:`StartupError` if semantic validation fails.
+    """
+    parsed = SyncConfig.model_validate_json(raw)
+    errors = validate_config(parsed)
+    if errors:
+        raise StartupError(f"Invalid sync config:\n" + "\n".join(errors))
+    return parsed
+
+
+def load_config_file(path: str | Path) -> SyncConfig:
+    """Load and validate a SyncConfig from a JSON file on disk.
+
+    Raises :class:`FileNotFoundError` if the file does not exist, or
+    :class:`StartupError` if validation fails.
+    """
+    return parse_config_json(Path(path).read_text(encoding="utf-8"))
 
 
 async def load_config(
