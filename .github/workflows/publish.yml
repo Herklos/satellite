@@ -22,7 +22,7 @@ jobs:
           node-version: "22"
           cache: pnpm
           registry-url: "https://npm.pkg.github.com"
-          scope: "@drakkar-software"
+          scope: "@${{ github.repository_owner }}"
 
       - run: pnpm install --frozen-lockfile
 
@@ -31,18 +31,19 @@ jobs:
       - name: Set version and scope from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           cd packages/core
-          npm pkg set "name=@drakkar-software/satellite-core" "version=$VERSION"
+          npm pkg set "name=@${OWNER}/satellite-core" "version=$VERSION"
           cd ../../clients/ts
-          npm pkg set "name=@drakkar-software/satellite-client" "version=$VERSION"
+          npm pkg set "name=@${OWNER}/satellite-client" "version=$VERSION"
 
-      - name: Publish @drakkar-software/satellite-core
+      - name: Publish satellite-core
         working-directory: packages/core
         run: pnpm publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish @drakkar-software/satellite-client
+      - name: Publish satellite-client
         working-directory: clients/ts
         run: pnpm publish --no-git-checks --access public
         env:
