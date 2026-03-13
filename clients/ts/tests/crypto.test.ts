@@ -15,12 +15,11 @@ describe("Encryptor", () => {
     expect(decrypted).toEqual(data)
   })
 
-  it("decrypt returns non-encrypted data as-is", async () => {
+  it("decrypt rejects non-encrypted data", async () => {
     const enc = createEncryptor("test-secret", "test-salt")
     const plain = { plain: "data" }
 
-    const result = await enc.decrypt(plain)
-    expect(result).toEqual(plain)
+    await expect(enc.decrypt(plain)).rejects.toThrow("Expected encrypted data but received unencrypted document")
   })
 
   it("different secrets produce different ciphertext", async () => {

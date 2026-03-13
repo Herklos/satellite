@@ -237,16 +237,13 @@ def _add_collection_routes(
 
             # Body limit
             content_length = request.headers.get("content-length")
-            limit_error = check_body_limit(
-                int(content_length) if content_length else None,
-                col.max_body_bytes,
-            )
+            limit_error = check_body_limit(content_length, col.max_body_bytes)
             if limit_error:
                 return limit_error
 
             # Rate limiting
             if rate_limiter:
-                rate_error = rate_limiter.check(identity)
+                rate_error = rate_limiter.check(identity, request)
                 if rate_error:
                     return rate_error
 
@@ -358,15 +355,12 @@ def _add_bundled_routes(
                 return error
 
             content_length = request.headers.get("content-length")
-            limit_error = check_body_limit(
-                int(content_length) if content_length else None,
-                col.max_body_bytes,
-            )
+            limit_error = check_body_limit(content_length, col.max_body_bytes)
             if limit_error:
                 return limit_error
 
             if rate_limiter:
-                rate_error = rate_limiter.check(identity)
+                rate_error = rate_limiter.check(identity, request)
                 if rate_error:
                     return rate_error
 

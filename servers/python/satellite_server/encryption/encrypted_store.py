@@ -52,9 +52,14 @@ class EncryptedObjectStore:
 
     def _decrypt(self, encoded: str) -> str:
         combined = base64.b64decode(encoded)
+        if len(combined) < IV_BYTES:
+            raise ValueError("Encrypted data is too short")
         iv = combined[:IV_BYTES]
         ciphertext = combined[IV_BYTES:]
-        plaintext = self._aesgcm.decrypt(iv, ciphertext, None)
+        try:
+            plaintext = self._aesgcm.decrypt(iv, ciphertext, None)
+        except Exception as exc:
+            raise ValueError("Decryption failed: data may be tampered or key is incorrect") from exc
         return plaintext.decode("utf-8")
 
     async def get_string(self, key: str) -> str | None:

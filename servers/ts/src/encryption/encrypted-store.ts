@@ -38,10 +38,17 @@ async function encrypt(key: CryptoKey, plaintext: string): Promise<string> {
 
 async function decrypt(key: CryptoKey, encoded: string): Promise<string> {
   const combined = Uint8Array.from(atob(encoded), c => c.charCodeAt(0))
+  if (combined.length < IV_BYTES) {
+    throw new Error("Encrypted data is too short")
+  }
   const iv = combined.slice(0, IV_BYTES)
   const ciphertext = combined.slice(IV_BYTES)
-  const plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ciphertext)
-  return new TextDecoder().decode(plaintext)
+  try {
+    const plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ciphertext)
+    return new TextDecoder().decode(plaintext)
+  } catch (err) {
+    throw new Error("Decryption failed: data may be tampered or key is incorrect", { cause: err })
+  }
 }
 
 /**

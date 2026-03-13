@@ -25,6 +25,13 @@ def validate_config(config: SyncConfig) -> list[str]:
         if col.pull_only and col.push_only:
             errors.append(f'Collection "{col.name}": cannot be both pullOnly and pushOnly')
 
+        # Public collections must not use identity-based encryption
+        if ROLE_PUBLIC in col.read_roles and col.encryption == ENCRYPTION_IDENTITY:
+            errors.append(
+                f'Collection "{col.name}": public collections must not use '
+                f'"{ENCRYPTION_IDENTITY}" encryption (key would be derived from empty identity)'
+            )
+
         # Bundled collections must use identity encryption
         if col.bundle and col.encryption != ENCRYPTION_IDENTITY:
             errors.append(

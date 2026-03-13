@@ -52,7 +52,19 @@ jobs:
         working-directory: servers/python
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/version = \"0.1.0\"/version = \"$VERSION\"/" pyproject.toml
+          # Validate version matches expected semver pattern
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "Invalid version format: $VERSION" >&2
+            exit 1
+          fi
+          python -c "
+          import re, sys
+          version = sys.argv[1]
+          path = 'pyproject.toml'
+          content = open(path).read()
+          content = content.replace('version = \"0.1.0\"', f'version = \"{version}\"', 1)
+          open(path, 'w').write(content)
+          " "$VERSION"
 
       - name: Build package
         working-directory: servers/python

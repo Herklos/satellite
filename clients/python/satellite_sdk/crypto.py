@@ -53,16 +53,21 @@ class Encryptor:
     def decrypt(self, wrapper: dict[str, Any]) -> dict[str, Any]:
         """Decrypt an encrypted wrapper back to the original data dict.
 
-        Returns *wrapper* as-is if it does not contain the encrypted key.
+        Raises ``ValueError`` if the wrapper does not contain encrypted data.
         """
         encoded = wrapper.get(ENCRYPTED_KEY)
         if not isinstance(encoded, str):
-            return wrapper
+            raise ValueError("Expected encrypted data but received unencrypted document")
 
         combined = base64.b64decode(encoded)
+        if len(combined) < IV_BYTES:
+            raise ValueError("Encrypted data is too short")
         iv = combined[:IV_BYTES]
         ciphertext = combined[IV_BYTES:]
-        plaintext = self._aesgcm.decrypt(iv, ciphertext, None)
+        try:
+            plaintext = self._aesgcm.decrypt(iv, ciphertext, None)
+        except Exception as exc:
+            raise ValueError("Decryption failed: data may be tampered or key is incorrect") from exc
         return json.loads(plaintext.decode("utf-8"))
 
 
