@@ -18,8 +18,8 @@ from satellite_server.constants import QUERY_CHECKPOINT, ERROR_HASH_MISMATCH, CO
 # Reject path segments with traversal, null bytes, slashes, control chars
 SAFE_PARAM = re.compile(r"^[a-zA-Z0-9._:@-]+$")
 
-# Reject keys containing path traversal or control characters
-UNSAFE_KEY = re.compile(r"\.\.|[\x00-\x1f]")
+# Reject keys containing path traversal, control characters, or other unsafe patterns
+UNSAFE_KEY = re.compile(r"\.\.|[\x00-\x1f]|//")
 
 UNSAFE_KEYS = frozenset({"__proto__", "constructor", "prototype"})
 
@@ -103,13 +103,19 @@ async def handle_sync_push(
 
     sanitized = deep_sanitize(data)
 
-    # Verify and forward author signature if provided
+    # Verify author signature
     author: Author | None = None
-    if isinstance(author_signature, str) and identity and verify_signature:
+    if verify_signature and identity:
+        # When a signature verifier is configured, signatures are mandatory
+        if not isinstance(author_signature, str):
+            return JSONResponse({"error": "Missing required author signature"}, status_code=400)
         canonical = stable_stringify(sanitized)
         valid = await verify_signature(canonical, author_signature, identity)
         if not valid:
             return JSONResponse({"error": "Invalid author signature"}, status_code=400)
+        author = Author(pubkey=identity, signature=author_signature)
+    elif isinstance(author_signature, str) and identity:
+        # No verifier configured but signature provided — store it without verification
         author = Author(pubkey=identity, signature=author_signature)
 
     result = await push(store, document_key, sanitized, base_hash, author, skip_timestamps)

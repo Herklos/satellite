@@ -26,6 +26,11 @@ export function validateConfig(config: SyncConfig): string[] {
       errors.push(`Collection "${col.name}": cannot be both pullOnly and pushOnly`)
     }
 
+    // Public collections must not use identity-based encryption
+    if (col.readRoles.includes(ROLE_PUBLIC) && col.encryption === ENCRYPTION_IDENTITY) {
+      errors.push(`Collection "${col.name}": public collections must not use "${ENCRYPTION_IDENTITY}" encryption (key would be derived from empty identity)`)
+    }
+
     // Bundled collections must use identity encryption
     if (col.bundle && col.encryption !== ENCRYPTION_IDENTITY) {
       errors.push(`Collection "${col.name}": bundled collections must use "${ENCRYPTION_IDENTITY}" encryption`)

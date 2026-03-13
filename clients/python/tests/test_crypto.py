@@ -24,12 +24,12 @@ def test_round_trip():
     assert decrypted == data
 
 
-def test_decrypt_unencrypted_passthrough():
+def test_decrypt_rejects_unencrypted():
     enc = Encryptor("test-secret", "test-salt")
     plain = {"plain": "data"}
 
-    result = enc.decrypt(plain)
-    assert result == plain
+    with pytest.raises(ValueError, match="Expected encrypted data but received unencrypted document"):
+        enc.decrypt(plain)
 
 
 def test_different_secrets():

@@ -25,8 +25,8 @@ function deepSanitize(obj: Record<string, unknown>): Record<string, unknown> {
   return safe
 }
 
-/** Reject keys containing path traversal or control characters */
-const UNSAFE_KEY = /\.\.|[\x00-\x1f]/
+/** Reject keys containing path traversal, control characters, or other unsafe patterns */
+const UNSAFE_KEY = /\.\.|[\x00-\x1f]|\/\//
 
 export async function handleSyncPull(
   c: Context,
@@ -105,14 +105,21 @@ export async function handleSyncPush(
 
   const sanitized = deepSanitize(data as Record<string, unknown>)
 
-  // Verify and forward author signature if provided
+  // Verify author signature
   let author: { pubkey: string; signature: string } | undefined
-  if (typeof authorSignature === "string" && identity && verifySignature) {
+  if (verifySignature && identity) {
+    // When a signature verifier is configured, signatures are mandatory
+    if (typeof authorSignature !== "string") {
+      return c.json({ error: "Missing required author signature" }, 400)
+    }
     const canonical = stableStringify(sanitized)
     const valid = await verifySignature(canonical, authorSignature, identity)
     if (!valid) {
       return c.json({ error: "Invalid author signature" }, 400)
     }
+    author = { pubkey: identity, signature: authorSignature }
+  } else if (typeof authorSignature === "string" && identity) {
+    // No verifier configured but signature provided — store it without verification
     author = { pubkey: identity, signature: authorSignature }
   }
 

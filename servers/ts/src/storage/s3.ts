@@ -10,6 +10,15 @@ export interface S3StorageOptions {
   service?: string
 }
 
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+}
+
 export class S3ObjectStore implements IObjectStore {
   private client: AwsClient
   private bucket: string
@@ -27,7 +36,7 @@ export class S3ObjectStore implements IObjectStore {
   }
 
   private url(key: string): string {
-    return `${this.endpoint}/${this.bucket}/${key}`
+    return `${this.endpoint}/${this.bucket}/${encodeURIComponent(key)}`
   }
 
   async getString(key: string): Promise<string | null> {
@@ -86,7 +95,7 @@ export class S3ObjectStore implements IObjectStore {
 
   async delMany(keys: string[]): Promise<void> {
     if (keys.length === 0) return
-    const xmlBody = `<Delete>${keys.map(k => `<Object><Key>${k}</Key></Object>`).join("")}</Delete>`
+    const xmlBody = `<Delete>${keys.map(k => `<Object><Key>${escapeXml(k)}</Key></Object>`).join("")}</Delete>`
     await this.client.fetch(`${this.endpoint}/${this.bucket}?delete`, {
       method: "POST",
       body: xmlBody,

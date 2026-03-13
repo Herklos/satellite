@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-
 from satellite_server.interfaces import IObjectStore
 
 

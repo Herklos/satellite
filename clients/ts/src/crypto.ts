@@ -73,17 +73,24 @@ export function createEncryptor(secret: string, salt: string, info: string = DEF
     async decrypt(wrapper: Record<string, unknown>): Promise<Record<string, unknown>> {
       const encoded = wrapper[ENCRYPTED_KEY]
       if (typeof encoded !== "string") {
-        return wrapper
+        throw new Error("Expected encrypted data but received unencrypted document")
       }
 
       const key = await keyPromise
       const c = getCrypto()
       const b64 = getBase64()
       const combined = b64.decode(encoded)
+      if (combined.length < IV_BYTES) {
+        throw new Error("Encrypted data is too short")
+      }
       const iv = combined.slice(0, IV_BYTES)
       const ciphertext = combined.slice(IV_BYTES)
-      const plaintext = await c.subtle.decrypt({ name: ALGO, iv }, key, ciphertext)
-      return JSON.parse(new TextDecoder().decode(plaintext))
+      try {
+        const plaintext = await c.subtle.decrypt({ name: ALGO, iv }, key, ciphertext)
+        return JSON.parse(new TextDecoder().decode(plaintext))
+      } catch (err) {
+        throw new Error("Decryption failed: data may be tampered or key is incorrect", { cause: err })
+      }
     },
   }
 }
