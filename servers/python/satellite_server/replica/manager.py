@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -75,6 +76,8 @@ class ReplicaManager:
         )
         # In-memory last-known hash per collection (avoids redundant writes)
         self._last_hash: dict[str, str] = {}
+        # Monotonic timestamp (seconds) of the last completed sync per collection
+        self._last_sync_at: dict[str, float] = {}
         self._tasks: list[asyncio.Task[None]] = []
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -123,11 +126,20 @@ class ReplicaManager:
     async def on_pull(self, collection_name: str) -> None:
         """Called by the pull route when ``on_pull`` is listed in ``sync_triggers``.
 
-        Awaited before the local store is read, ensuring the response is always fresh.
+        Awaited before the local store is read, ensuring the response is fresh.
+        If ``on_pull_min_interval_ms`` is configured and the last sync occurred within
+        that window, the primary is not contacted and cached local data is served instead.
         """
         col = self._find(collection_name)
         if col is None:
             return
+
+        min_interval_ms = col.remote.on_pull_min_interval_ms if col.remote else None  # type: ignore[union-attr]
+        if min_interval_ms is not None:
+            last = self._last_sync_at.get(collection_name)
+            if last is not None and (time.monotonic() - last) * 1000 < min_interval_ms:
+                return  # within cooldown — serve cached local data
+
         await self._sync_safe(col)
 
     async def sync_now(self, name: str) -> None:
@@ -216,6 +228,7 @@ class ReplicaManager:
             )
 
         self._last_hash[col.name] = result.hash
+        self._last_sync_at[col.name] = time.monotonic()
         logger.debug("[ReplicaManager] Synced %r (hash=%s)", col.name, result.hash)
 
     async def _subscribe(self, col: CollectionConfig) -> None:

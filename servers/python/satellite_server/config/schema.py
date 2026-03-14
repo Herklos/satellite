@@ -73,6 +73,15 @@ class RemoteConfig(BaseModel):
     """HMAC-SHA256 secret used to verify incoming ``POST /replica/notify`` requests.
     Required when ``webhook`` is listed in ``sync_triggers``."""
 
+    on_pull_min_interval_ms: int | None = Field(default=None, gt=0, alias="onPullMinIntervalMs")
+    """Minimum time in milliseconds between two consecutive syncs triggered by ``on_pull``.
+
+    When a client pulls and this cooldown has not elapsed since the last sync, the replica
+    skips the round-trip to the primary and serves the locally cached data instead.
+
+    ``None`` (default) means every ``on_pull`` request always syncs from the primary.
+    Only relevant when ``on_pull`` is listed in ``sync_triggers``."""
+
 
 class CollectionConfig(BaseModel):
     """Configuration for a single synced collection."""

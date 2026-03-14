@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import httpx
 import pytest
@@ -22,6 +23,7 @@ from tests.helpers import MemoryObjectStore
 def _make_col(
     write_mode: WriteMode = WriteMode.PULL_ONLY,
     sync_triggers: list[SyncTrigger] | None = None,
+    on_pull_min_interval_ms: int | None = None,
 ) -> CollectionConfig:
     return CollectionConfig(
         name="featured",
@@ -38,6 +40,7 @@ def _make_col(
             interval_ms=60_000,
             write_mode=write_mode,
             sync_triggers=sync_triggers or [SyncTrigger.SCHEDULED],
+            on_pull_min_interval_ms=on_pull_min_interval_ms,
         ),
     )
 
@@ -188,3 +191,65 @@ async def test_sync_now_unknown_collection_raises():
     manager = ReplicaManager(store, [])
     with pytest.raises(ValueError, match="Unknown remote collection"):
         await manager.sync_now("nonexistent")
+
+
+# ── on_pull cooldown ──────────────────────────────────────────────────────
+
+
+@respx.mock
+async def test_on_pull_respects_cooldown():
+    """Second on_pull within cooldown window skips the primary."""
+    store = MemoryObjectStore()
+    col = _make_col(
+        sync_triggers=[SyncTrigger.ON_PULL],
+        on_pull_min_interval_ms=5_000,  # 5-second cooldown
+    )
+    route = respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "Hello"}, hash_val="hash1")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.on_pull("featured")   # first call — hits primary
+        await manager.on_pull("featured")   # within cooldown — should NOT hit primary
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_on_pull_syncs_after_cooldown_expires():
+    """on_pull syncs again once the cooldown has elapsed."""
+    store = MemoryObjectStore()
+    col = _make_col(
+        sync_triggers=[SyncTrigger.ON_PULL],
+        on_pull_min_interval_ms=1,  # 1 ms — expires almost immediately
+    )
+    route = respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "Hello"}, hash_val="hash1")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.on_pull("featured")   # first sync
+        # Force last_sync_at into the past so the cooldown is expired
+        manager._last_sync_at["featured"] = time.monotonic() - 1.0
+        await manager.on_pull("featured")   # cooldown elapsed — hits primary again
+
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_on_pull_no_cooldown_always_syncs():
+    """Without on_pull_min_interval_ms, every on_pull hits the primary."""
+    store = MemoryObjectStore()
+    col = _make_col(sync_triggers=[SyncTrigger.ON_PULL])  # no cooldown
+    route = respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "Hello"}, hash_val="hash1")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.on_pull("featured")
+        await manager.on_pull("featured")
+
+    assert route.call_count == 2
