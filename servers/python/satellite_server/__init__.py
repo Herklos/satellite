@@ -29,6 +29,7 @@ from satellite_server.protocol.types import StoredDocument, PullResult, PushResu
 from satellite_server.protocol.timestamps import compute_timestamps, filter_by_checkpoint
 from satellite_server.protocol.pull import pull
 from satellite_server.protocol.push import push
+from satellite_server.protocol.merge import deep_merge
 from satellite_server.encryption.encrypted_store import EncryptedObjectStore
 from satellite_server.config.schema import (
     SyncConfig,

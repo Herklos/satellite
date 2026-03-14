@@ -12,27 +12,12 @@ import httpx
 
 from satellite_server.config.schema import CollectionConfig, SyncTrigger, WriteMode
 from satellite_server.interfaces import IObjectStore
+from satellite_server.protocol.merge import deep_merge
 from satellite_server.protocol.push import push
 from satellite_server.protocol.types import PushSuccess
 
 logger = logging.getLogger(__name__)
 
-
-def _deep_merge(local: dict[str, Any], remote: dict[str, Any]) -> dict[str, Any]:
-    """Remote-wins deep merge.
-
-    Recursively merges *remote* into *local*: for nested dicts both sides share,
-    keys are merged recursively; for all other values, the remote value wins.
-    This mirrors the ``defaultMerge`` behaviour in the TypeScript client SDK.
-    """
-    merged = {**local}
-    for key, remote_val in remote.items():
-        local_val = merged.get(key)
-        if isinstance(remote_val, dict) and isinstance(local_val, dict):
-            merged[key] = _deep_merge(local_val, remote_val)
-        else:
-            merged[key] = remote_val
-    return merged
 
 
 class ReplicaManager:
@@ -211,7 +196,7 @@ class ReplicaManager:
 
         # Determine data to write based on write mode
         if remote.write_mode == WriteMode.BIDIRECTIONAL and current_local_data:
-            data_to_write = _deep_merge(current_local_data, primary_data)
+            data_to_write = deep_merge(current_local_data, primary_data)
         else:
             # PULL_ONLY and WRITE_THROUGH: mirror primary exactly
             data_to_write = primary_data
