@@ -114,6 +114,53 @@ class RateLimitConfig(BaseModel):
     max_requests: int = Field(gt=0, alias="maxRequests")
 
 
+class WildcardRemoteConfig(BaseModel):
+    """Catch-all replica config for collection paths not matched by any explicit collection.
+
+    When a client pulls a path that has no matching ``CollectionConfig``, the replica
+    uses this config to fetch from the primary on demand, cache the result locally,
+    and serve it.  Only ``on_pull`` semantics apply — there is no scheduled or webhook
+    trigger for wildcard collections.
+
+    Example::
+
+        wildcard_remote:
+          url: "https://primary.example.com/v1"
+          pullPathTemplate: "/pull/{name}"
+          readRoles: ["public"]
+          negativeCacheMs: 300000   # don't re-probe the primary for 5 min after a 404
+    """
+
+    model_config = {"populate_by_name": True}
+
+    url: str
+    """Base URL of the primary satellite server."""
+
+    pull_path_template: str = Field(alias="pullPathTemplate")
+    """Path template on the primary.  ``{name}`` is replaced by the requested collection path.
+    E.g. ``/pull/{name}`` → ``/pull/posts/featured`` for path ``posts/featured``."""
+
+    read_roles: list[str] = Field(alias="readRoles")
+    """Roles required to access any wildcard collection on **this** replica.
+    Use ``["public"]`` to allow unauthenticated access.  Auth against the primary is
+    always enforced via ``headers``; a primary 401/403 negative-caches the path."""
+
+    headers: dict[str, str] = Field(default_factory=dict)
+    """Static HTTP headers sent to the primary on every wildcard fetch (e.g. auth token)."""
+
+    on_pull_min_interval_ms: int | None = Field(default=None, gt=0, alias="onPullMinIntervalMs")
+    """Minimum time between two primary fetches for the same path (ms).
+    Within the cooldown window the replica serves locally cached data without
+    contacting the primary.  ``None`` (default) means every request fetches fresh."""
+
+    negative_cache_ms: int = Field(default=300_000, gt=0, alias="negativeCacheMs")
+    """How long to suppress re-fetching a path after the primary returned 404 or 403 (ms).
+    Defaults to 5 minutes.  Stale local data (if any) is still served during this window."""
+
+    max_body_bytes: int = Field(default=65536, gt=0, alias="maxBodyBytes")
+    """Maximum response body size accepted from the primary for any single wildcard document."""
+
+
 class SyncConfig(BaseModel):
     """Top-level sync configuration."""
 
@@ -122,3 +169,6 @@ class SyncConfig(BaseModel):
     version: Literal[1]
     collections: list[CollectionConfig]
     rate_limit: RateLimitConfig | None = Field(default=None, alias="rateLimit")
+    wildcard_remote: WildcardRemoteConfig | None = Field(default=None, alias="wildcardRemote")
+    """When set, enables a catch-all pull route on the replica that handles any collection path
+    not matched by an explicit ``CollectionConfig`` entry."""

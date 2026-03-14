@@ -37,6 +37,7 @@ from satellite_server.config.schema import (
     RateLimitConfig,
     EncryptionMode,
     RemoteConfig,
+    WildcardRemoteConfig,
     WriteMode,
     SyncTrigger,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "RateLimitConfig",
     "EncryptionMode",
     "RemoteConfig",
+    "WildcardRemoteConfig",
     "WriteMode",
     "SyncTrigger",
     "validate_config",

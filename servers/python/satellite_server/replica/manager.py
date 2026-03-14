@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from satellite_server.config.schema import CollectionConfig, SyncTrigger, WriteMode
+from satellite_server.config.schema import CollectionConfig, SyncTrigger, WildcardRemoteConfig, WriteMode
 from satellite_server.interfaces import IObjectStore
 from satellite_server.protocol.merge import deep_merge
 from satellite_server.protocol.push import push
@@ -50,6 +50,7 @@ class ReplicaManager:
         self_base_url: str | None = None,
         client: httpx.AsyncClient | None = None,
         on_error: Callable[[str, Exception], None] | None = None,
+        wildcard_remote: WildcardRemoteConfig | None = None,
     ) -> None:
         self._store = store
         self._remote_cols = [c for c in collections if c.remote is not None]
@@ -59,11 +60,16 @@ class ReplicaManager:
         self._on_error = on_error or (
             lambda name, exc: logger.error("[ReplicaManager] %s: %s", name, exc)
         )
+        self._wildcard_remote = wildcard_remote
         # In-memory last-known hash per collection (avoids redundant writes)
         self._last_hash: dict[str, str] = {}
         # Monotonic timestamp (seconds) of the last completed sync per collection
         self._last_sync_at: dict[str, float] = {}
         self._tasks: list[asyncio.Task[None]] = []
+        # Wildcard state (keyed by collection path)
+        self._wildcard_last_hash: dict[str, str] = {}
+        self._wildcard_last_sync_at: dict[str, float] = {}
+        self._negative_cache: dict[str, float] = {}  # path → monotonic time of 404/403
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -137,6 +143,100 @@ class ReplicaManager:
     async def sync_all(self) -> None:
         """Trigger an immediate sync for all remote collections in parallel."""
         await asyncio.gather(*(self._sync_safe(col) for col in self._remote_cols))
+
+    async def on_pull_wildcard(self, path: str) -> bool:
+        """Called by the wildcard catch-all pull route for paths not matched by any explicit collection.
+
+        Fetches from the primary on demand, stores the result locally, and returns
+        ``True`` if data is available (freshly fetched or stale cached).  Returns
+        ``False`` if the collection does not exist or is not authorised on the primary
+        and no stale copy is held locally.
+
+        Negative results (404 / 403 from primary) are cached for
+        ``wildcard_remote.negative_cache_ms`` to avoid hammering the primary.
+        On primary unavailability (network errors, 5xx) stale local data is served
+        when available.
+        """
+        if self._wildcard_remote is None:
+            return False
+
+        wildcard = self._wildcard_remote
+
+        # ── Negative cache ───────────────────────────────────────────────────
+        neg_ts = self._negative_cache.get(path)
+        if neg_ts is not None:
+            if (time.monotonic() - neg_ts) * 1000 < wildcard.negative_cache_ms:
+                # Still negatively cached — serve stale if available, else 404
+                return await self._store.get_string(path) is not None
+            # Cache expired — remove and retry
+            del self._negative_cache[path]
+
+        # ── on_pull cooldown ─────────────────────────────────────────────────
+        if wildcard.on_pull_min_interval_ms is not None:
+            last = self._wildcard_last_sync_at.get(path)
+            if last is not None and (time.monotonic() - last) * 1000 < wildcard.on_pull_min_interval_ms:
+                local = await self._store.get_string(path)
+                if local is not None:
+                    return True  # within cooldown, cached data available
+                # No local data despite cooldown being active — fall through to fetch
+
+        # ── Fetch from primary ───────────────────────────────────────────────
+        pull_path = wildcard.pull_path_template.replace("{name}", path)
+        primary_url = f"{wildcard.url.rstrip('/')}{pull_path}"
+
+        try:
+            resp = await self._client.get(
+                primary_url,
+                headers={"Accept": "application/json", **wildcard.headers},
+            )
+        except Exception as exc:
+            logger.warning("[ReplicaManager] Wildcard fetch failed for %r: %s", path, exc)
+            return await self._store.get_string(path) is not None  # serve stale
+
+        if resp.status_code in (401, 403, 404):
+            self._negative_cache[path] = time.monotonic()
+            logger.debug(
+                "[ReplicaManager] Wildcard %r: primary returned HTTP %s — negative-cached",
+                path,
+                resp.status_code,
+            )
+            return await self._store.get_string(path) is not None  # serve stale if any
+
+        if not resp.is_success:
+            logger.warning(
+                "[ReplicaManager] Wildcard fetch for %r returned HTTP %s — serving stale",
+                path,
+                resp.status_code,
+            )
+            return await self._store.get_string(path) is not None  # serve stale
+
+        import json
+
+        pulled: dict[str, Any] = resp.json()
+        primary_hash: str = pulled.get("hash", "")
+        primary_data: dict[str, Any] = pulled.get("data", {})
+
+        if not primary_hash:
+            # Empty collection on primary
+            return False
+
+        # Skip write if we already have this version
+        if self._wildcard_last_hash.get(path) != primary_hash:
+            raw_local = await self._store.get_string(path)
+            current_hash: str | None = None
+            if raw_local:
+                current_hash = json.loads(raw_local).get("hash") or None
+
+            if current_hash != primary_hash:
+                result = await push(self._store, path, primary_data, current_hash)
+                if isinstance(result, PushSuccess):
+                    self._wildcard_last_hash[path] = result.hash
+            else:
+                self._wildcard_last_hash[path] = primary_hash
+
+        self._wildcard_last_sync_at[path] = time.monotonic()
+        logger.debug("[ReplicaManager] Wildcard synced %r (hash=%s)", path, primary_hash)
+        return True
 
     # ── Internal ─────────────────────────────────────────────────────────────
 

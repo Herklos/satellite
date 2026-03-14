@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from satellite_server.interfaces import IObjectStore
-from satellite_server.config.schema import SyncConfig, CollectionConfig, SyncTrigger, WriteMode
+from satellite_server.config.schema import SyncConfig, CollectionConfig, SyncTrigger, WildcardRemoteConfig, WriteMode
 from satellite_server.encryption.encrypted_store import EncryptedObjectStore
 from satellite_server.protocol.pull import pull
 from satellite_server.router.helpers import (
@@ -479,6 +479,49 @@ def _add_bundled_routes(
         router.add_api_route(push_path, bundle_push_handler, methods=["POST"])
 
 
+# ── Wildcard catch-all ────────────────────────────────────────────────────
+
+
+def _add_wildcard_pull_route(router: APIRouter, opts: SyncRouterOptions) -> None:
+    """Register a low-priority ``GET /pull/{path:path}`` route for wildcard replication.
+
+    This route is added *after* all explicit collection routes so FastAPI will only
+    invoke it for paths that did not match any configured collection.
+    """
+    wildcard: WildcardRemoteConfig = opts.config.wildcard_remote  # type: ignore[assignment]
+    replica_manager = opts.replica_manager
+
+    async def wildcard_pull_handler(request: Request) -> JSONResponse:
+        path: str = request.path_params.get("path", "")
+
+        # Validate every segment against the same safe-param regex used elsewhere
+        if not path or any(not validate_path_segment(seg) for seg in path.split("/")):
+            return JSONResponse({"error": "Invalid path"}, status_code=400)
+
+        # Replica-side auth gate
+        if ROLE_PUBLIC not in wildcard.read_roles:
+            try:
+                auth = await opts.role_resolver(request)
+            except Exception:
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            if not any(r in auth.roles for r in wildcard.read_roles):
+                return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+        # Fetch from primary (or serve cached / negative-cached)
+        if replica_manager is not None:
+            found = await replica_manager.on_pull_wildcard(path)
+            if not found:
+                return JSONResponse({"error": "Not found"}, status_code=404)
+
+        checkpoint_param = request.query_params.get(QUERY_CHECKPOINT)
+        return await handle_sync_pull(
+            path, opts.store, checkpoint_param,
+            force_full_fetch=False, is_client_encrypted=False,
+        )
+
+    router.add_api_route("/pull/{path:path}", wildcard_pull_handler, methods=["GET"])
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 
@@ -502,5 +545,9 @@ def create_sync_router(opts: SyncRouterOptions) -> APIRouter:
 
     for bundle_name, bundle_collections in bundles.items():
         _add_bundled_routes(router, bundle_name, bundle_collections, opts)
+
+    # Wildcard catch-all must be registered last so explicit routes take priority
+    if opts.config.wildcard_remote is not None and opts.replica_manager is not None:
+        _add_wildcard_pull_route(router, opts)
 
     return router
