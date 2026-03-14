@@ -35,9 +35,20 @@ from satellite_server.config.schema import (
     CollectionConfig,
     RateLimitConfig,
     EncryptionMode,
+    RemoteConfig,
+    WriteMode,
+    SyncTrigger,
 )
 from satellite_server.config.validate import validate_config
 from satellite_server.config.loader import load_config, save_config, parse_config_json, load_config_file
+from satellite_server.replica import (
+    ReplicaManager,
+    NotificationPublisher,
+    Subscription,
+    SubscriptionStore,
+    create_replica_router,
+)
+from satellite_server.storage.filesystem import FilesystemObjectStore, FilesystemStorageOptions
 
 __all__ = [
     "IObjectStore",
@@ -80,9 +91,19 @@ __all__ = [
     "CollectionConfig",
     "RateLimitConfig",
     "EncryptionMode",
+    "RemoteConfig",
+    "WriteMode",
+    "SyncTrigger",
     "validate_config",
     "load_config",
     "save_config",
     "parse_config_json",
     "load_config_file",
+    "ReplicaManager",
+    "NotificationPublisher",
+    "Subscription",
+    "SubscriptionStore",
+    "create_replica_router",
+    "FilesystemObjectStore",
+    "FilesystemStorageOptions",
 ]

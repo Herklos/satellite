@@ -1,0 +1,190 @@
+"""Tests for ReplicaManager — sync logic and write modes."""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+import respx
+
+from satellite_server.config.schema import (
+    CollectionConfig,
+    RemoteConfig,
+    SyncTrigger,
+    WriteMode,
+)
+from satellite_server.protocol.push import push
+from satellite_server.replica.manager import ReplicaManager, _deep_merge
+from tests.helpers import MemoryObjectStore
+
+
+def _make_col(
+    write_mode: WriteMode = WriteMode.PULL_ONLY,
+    sync_triggers: list[SyncTrigger] | None = None,
+) -> CollectionConfig:
+    return CollectionConfig(
+        name="featured",
+        storage_path="posts/featured",
+        read_roles=["public"],
+        write_roles=[],
+        encryption="none",
+        max_body_bytes=65536,
+        pull_only=True,
+        remote=RemoteConfig(
+            url="https://primary.example.com/v1",
+            pull_path="/pull/posts/featured",
+            push_path="/push/posts/featured",
+            interval_ms=60_000,
+            write_mode=write_mode,
+            sync_triggers=sync_triggers or [SyncTrigger.SCHEDULED],
+        ),
+    )
+
+
+def _primary_response(data: dict, hash_val: str = "abc123", timestamp: int = 1000) -> dict:
+    return {"data": data, "hash": hash_val, "timestamp": timestamp}
+
+
+# ── _deep_merge ───────────────────────────────────────────────────────────
+
+
+def test_deep_merge_remote_wins_scalar():
+    result = _deep_merge({"a": 1}, {"a": 2})
+    assert result == {"a": 2}
+
+
+def test_deep_merge_adds_remote_keys():
+    result = _deep_merge({"a": 1}, {"b": 2})
+    assert result == {"a": 1, "b": 2}
+
+
+def test_deep_merge_recursive():
+    local = {"nested": {"x": 1, "y": 2}}
+    remote = {"nested": {"y": 99, "z": 3}}
+    result = _deep_merge(local, remote)
+    assert result == {"nested": {"x": 1, "y": 99, "z": 3}}
+
+
+# ── Sync logic ────────────────────────────────────────────────────────────
+
+
+@respx.mock
+async def test_sync_writes_primary_data_to_store():
+    store = MemoryObjectStore()
+    col = _make_col()
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "Hello"}, hash_val="hash1")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.sync_now("featured")
+
+    raw = await store.get_string("posts/featured")
+    assert raw is not None
+    doc = json.loads(raw)
+    assert doc["data"] == {"title": "Hello"}
+
+
+@respx.mock
+async def test_sync_skips_write_when_hash_unchanged():
+    store = MemoryObjectStore()
+    col = _make_col()
+
+    # Pre-populate local store with same data
+    await push(store, "posts/featured", {"title": "Hello"}, None)
+    local_raw = await store.get_string("posts/featured")
+    local_hash = json.loads(local_raw)["hash"]
+
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "Hello"}, hash_val=local_hash)
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        manager._last_hash["featured"] = local_hash  # simulate already synced
+        call_count_before = len(respx.calls)
+        await manager.sync_now("featured")
+
+    # Store content should be unchanged
+    raw = await store.get_string("posts/featured")
+    assert json.loads(raw)["data"] == {"title": "Hello"}
+
+
+@respx.mock
+async def test_sync_empty_primary_is_noop():
+    store = MemoryObjectStore()
+    col = _make_col()
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json={"data": {}, "hash": "", "timestamp": 1000}
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.sync_now("featured")
+
+    assert await store.get_string("posts/featured") is None
+
+
+@respx.mock
+async def test_sync_bidirectional_merges_local_and_remote():
+    store = MemoryObjectStore()
+    col = _make_col(write_mode=WriteMode.BIDIRECTIONAL)
+
+    # Local has {a: 1, b: 2}; primary has {b: 99, c: 3}
+    await push(store, "posts/featured", {"a": 1, "b": 2}, None)
+
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"b": 99, "c": 3}, hash_val="newhash")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.sync_now("featured")
+
+    raw = await store.get_string("posts/featured")
+    doc = json.loads(raw)
+    # remote wins on b; local a survives; remote adds c
+    assert doc["data"]["a"] == 1
+    assert doc["data"]["b"] == 99
+    assert doc["data"]["c"] == 3
+
+
+@respx.mock
+async def test_on_notification_triggers_sync():
+    store = MemoryObjectStore()
+    col = _make_col(sync_triggers=[SyncTrigger.WEBHOOK])
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "From notification"}, hash_val="notifhash")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.on_notification("featured")
+
+    raw = await store.get_string("posts/featured")
+    assert json.loads(raw)["data"] == {"title": "From notification"}
+
+
+@respx.mock
+async def test_on_pull_triggers_sync():
+    store = MemoryObjectStore()
+    col = _make_col(sync_triggers=[SyncTrigger.ON_PULL])
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(
+        200, json=_primary_response({"title": "Fresh"}, hash_val="freshhash")
+    )
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client)
+        await manager.on_pull("featured")
+
+    raw = await store.get_string("posts/featured")
+    assert json.loads(raw)["data"] == {"title": "Fresh"}
+
+
+async def test_sync_now_unknown_collection_raises():
+    store = MemoryObjectStore()
+    manager = ReplicaManager(store, [])
+    with pytest.raises(ValueError, match="Unknown remote collection"):
+        await manager.sync_now("nonexistent")

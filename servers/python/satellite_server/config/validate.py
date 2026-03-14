@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from satellite_server.config.schema import SyncConfig
-from satellite_server.constants import ENCRYPTION_IDENTITY, IDENTITY_PARAM, ROLE_PUBLIC
+import re
+
+from satellite_server.config.schema import SyncConfig, SyncTrigger, WriteMode
+from satellite_server.constants import ENCRYPTION_IDENTITY, ENCRYPTION_DELEGATED, IDENTITY_PARAM, ROLE_PUBLIC
 
 
 def validate_config(config: SyncConfig) -> list[str]:
@@ -49,6 +51,39 @@ def validate_config(config: SyncConfig) -> list[str]:
             errors.append(
                 f'Collection "{col.name}": readRoles must not be empty (use ["{ROLE_PUBLIC}"] for public access)'
             )
+
+        # Remote collection constraints
+        if col.remote:
+            # storagePath must be static — template variables cannot be resolved for replication
+            if re.search(r"\{[^}]+\}", col.storage_path):
+                errors.append(
+                    f'Collection "{col.name}": remote collections must have a static storagePath '
+                    f'with no template variables (found "{col.storage_path}")'
+                )
+            # pushOnly conflicts with replication (replica writes locally)
+            if col.push_only:
+                errors.append(f'Collection "{col.name}": remote collections cannot be pushOnly')
+            # Bundle support would require coordinating multiple document keys
+            if col.bundle:
+                errors.append(f'Collection "{col.name}": remote collections cannot be part of a bundle')
+            # Delegated encryption is opaque to the server — cannot replicate client-encrypted blobs
+            if col.encryption == ENCRYPTION_DELEGATED:
+                errors.append(
+                    f'Collection "{col.name}": remote collections cannot use delegated encryption '
+                    f'(server cannot replicate opaque client-encrypted blobs)'
+                )
+            # write_through and bidirectional require a push_path to forward writes to the primary
+            if col.remote.write_mode in (WriteMode.WRITE_THROUGH, WriteMode.BIDIRECTIONAL):
+                if not col.remote.push_path:
+                    errors.append(
+                        f'Collection "{col.name}": write_mode "{col.remote.write_mode.value}" '
+                        f'requires remote.push_path to be set'
+                    )
+            # webhook trigger requires a shared secret for HMAC verification
+            if SyncTrigger.WEBHOOK in col.remote.sync_triggers and not col.remote.webhook_secret:
+                errors.append(
+                    f'Collection "{col.name}": sync trigger "webhook" requires remote.webhook_secret to be set'
+                )
 
     # Check bundles: all collections in same bundle must share storagePath
     bundles: dict[str, str] = {}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -9,6 +10,68 @@ from pydantic import BaseModel, Field
 from satellite_server.constants import ENCRYPTION_NONE, ENCRYPTION_IDENTITY, ENCRYPTION_SERVER, ENCRYPTION_DELEGATED
 
 EncryptionMode = Literal["none", "identity", "server", "delegated"]
+
+
+class WriteMode(str, Enum):
+    """Controls how local client writes are handled on a replica collection."""
+
+    PULL_ONLY = "pull_only"
+    """Only the ReplicaManager writes locally; local client pushes are rejected (405)."""
+
+    WRITE_THROUGH = "write_through"
+    """Local client pushes are forwarded to the primary; the replica syncs back afterwards."""
+
+    BIDIRECTIONAL = "bidirectional"
+    """Local client pushes are stored locally and merged (remote-wins) with the primary on sync."""
+
+
+class SyncTrigger(str, Enum):
+    """Events that trigger a sync from the primary."""
+
+    SCHEDULED = "scheduled"
+    """Sync on a fixed interval (``interval_ms``)."""
+
+    WEBHOOK = "webhook"
+    """Sync when the primary sends a ``POST /replica/notify`` notification."""
+
+    ON_PULL = "on_pull"
+    """Sync before serving each local ``GET /pull/…`` request (lazy / always-fresh)."""
+
+
+class RemoteConfig(BaseModel):
+    """Declares that a collection should be replicated from a remote (primary) satellite server."""
+
+    model_config = {"populate_by_name": True}
+
+    url: str
+    """Base URL of the primary satellite server, e.g. ``https://primary.example.com/v1``."""
+
+    pull_path: str = Field(alias="pullPath")
+    """Pull endpoint path on the primary, e.g. ``/pull/posts/featured``.
+    Must be a static path — no template variables."""
+
+    push_path: str | None = Field(default=None, alias="pushPath")
+    """Push endpoint path on the primary. Required for ``write_through`` and ``bidirectional`` write modes."""
+
+    interval_ms: int = Field(default=60_000, gt=0, alias="intervalMs")
+    """Sync interval in milliseconds (used by the ``scheduled`` trigger). Defaults to 60 000 ms."""
+
+    headers: dict[str, str] = Field(default_factory=dict)
+    """Static HTTP headers sent to the primary on every request (e.g. ``Authorization: Bearer <token>``).
+    These credentials must satisfy the primary collection's ``readRoles`` (and ``writeRoles`` for write-through)."""
+
+    write_mode: WriteMode = Field(default=WriteMode.PULL_ONLY, alias="writeMode")
+    """How local client writes are handled. Defaults to ``pull_only``."""
+
+    sync_triggers: list[SyncTrigger] = Field(
+        default_factory=lambda: [SyncTrigger.SCHEDULED],
+        alias="syncTriggers",
+    )
+    """Which events trigger a sync from the primary. Defaults to ``[scheduled]``."""
+
+    webhook_secret: str | None = Field(default=None, alias="webhookSecret")
+    """HMAC-SHA256 secret used to verify incoming ``POST /replica/notify`` requests.
+    Required when ``webhook`` is listed in ``sync_triggers``."""
 
 
 class CollectionConfig(BaseModel):
@@ -28,6 +91,9 @@ class CollectionConfig(BaseModel):
     force_full_fetch: bool | None = Field(default=None, alias="forceFullFetch")
     client_encrypted: bool | None = Field(default=None, alias="clientEncrypted")
     bundle: str | None = Field(default=None, min_length=1)
+    remote: RemoteConfig | None = Field(default=None)
+    """When set, this collection is replicated from a remote primary satellite server.
+    All replica behavior (write mode, sync triggers, interval, auth) is fully described here."""
 
 
 class RateLimitConfig(BaseModel):
