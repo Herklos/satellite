@@ -77,6 +77,22 @@ async def test_notify_tolerates_delivery_failure(sub_store):
         await publisher.notify("posts", "abc123", 9000)
 
 
+@respx.mock
+async def test_notify_fans_out_to_multiple_subscribers(sub_store):
+    """All registered subscribers for a collection receive the notification."""
+    await sub_store.add("https://replica-a.example.com", ["posts"], subscribed_at=1000)
+    await sub_store.add("https://replica-b.example.com", ["posts"], subscribed_at=1001)
+    route_a = respx.post("https://replica-a.example.com/replica/notify").respond(200, json={"ok": True})
+    route_b = respx.post("https://replica-b.example.com/replica/notify").respond(200, json={"ok": True})
+
+    async with httpx.AsyncClient() as client:
+        publisher = NotificationPublisher(sub_store, client=client)
+        await publisher.notify("posts", "abc123", 9000)
+
+    assert route_a.called
+    assert route_b.called
+
+
 def test_verify_signature_valid():
     body = b'{"collection":"posts"}'
     secret = "supersecret"

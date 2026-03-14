@@ -186,6 +186,24 @@ async def test_on_pull_triggers_sync():
     assert json.loads(raw)["data"] == {"title": "Fresh"}
 
 
+@respx.mock
+async def test_primary_error_calls_on_error_handler():
+    """Background sync paths (on_notification, on_pull) catch primary errors via on_error
+    rather than propagating them to the caller."""
+    store = MemoryObjectStore()
+    col = _make_col(sync_triggers=[SyncTrigger.WEBHOOK])
+    respx.get("https://primary.example.com/v1/pull/posts/featured").respond(503)
+
+    errors: list[tuple[str, Exception]] = []
+
+    async with httpx.AsyncClient() as client:
+        manager = ReplicaManager(store, [col], client=client, on_error=lambda name, exc: errors.append((name, exc)))
+        await manager.on_notification("featured")  # should not raise
+
+    assert len(errors) == 1
+    assert errors[0][0] == "featured"
+
+
 async def test_sync_now_unknown_collection_raises():
     store = MemoryObjectStore()
     manager = ReplicaManager(store, [])
