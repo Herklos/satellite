@@ -1,5 +1,5 @@
 import type { SyncConfig } from "./schema.js"
-import { ENCRYPTION_IDENTITY, ENCRYPTION_DELEGATED, IDENTITY_PARAM, ROLE_PUBLIC } from "../constants.js"
+import { ENCRYPTION_IDENTITY, IDENTITY_PARAM, ROLE_PUBLIC } from "../constants.js"
 
 /**
  * Semantic validation beyond what Zod covers.
@@ -47,26 +47,6 @@ export function validateConfig(config: SyncConfig): string[] {
     }
     if (!col.pushOnly && col.writeRoles.length === 0 && !col.pullOnly) {
       // writeRoles can be empty for pullOnly collections
-    }
-
-    // Remote collection constraints
-    if (col.remote) {
-      // Remote collections are read-only on the replica — pushOnly makes no sense
-      if (col.pushOnly) {
-        errors.push(`Collection "${col.name}": remote collections cannot be pushOnly`)
-      }
-      // Template variables in storagePath require per-document resolution which replication doesn't support
-      if (/\{[^}]+\}/.test(col.storagePath)) {
-        errors.push(`Collection "${col.name}": remote collections must have a static storagePath with no template variables (found "${col.storagePath}")`)
-      }
-      // Bundled collections have a more complex pull path that conflicts with simple remote replication
-      if (col.bundle) {
-        errors.push(`Collection "${col.name}": remote collections cannot be part of a bundle`)
-      }
-      // Delegated (client-side) encryption cannot be replicated server-side
-      if (col.encryption === ENCRYPTION_DELEGATED) {
-        errors.push(`Collection "${col.name}": remote collections cannot use delegated encryption (server cannot replicate opaque client-encrypted blobs)`)
-      }
     }
   }
 
