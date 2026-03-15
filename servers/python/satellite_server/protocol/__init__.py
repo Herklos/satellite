@@ -5,6 +5,7 @@ from satellite_server.protocol.types import StoredDocument, PullResult, PushResu
 from satellite_server.protocol.timestamps import compute_timestamps, filter_by_checkpoint
 from satellite_server.protocol.pull import pull
 from satellite_server.protocol.push import push
+from satellite_server.protocol.merge import deep_merge
 
 __all__ = [
     "stable_stringify",
@@ -17,4 +18,5 @@ __all__ = [
     "filter_by_checkpoint",
     "pull",
     "push",
+    "deep_merge",
 ]

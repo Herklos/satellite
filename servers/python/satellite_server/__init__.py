@@ -29,15 +29,28 @@ from satellite_server.protocol.types import StoredDocument, PullResult, PushResu
 from satellite_server.protocol.timestamps import compute_timestamps, filter_by_checkpoint
 from satellite_server.protocol.pull import pull
 from satellite_server.protocol.push import push
+from satellite_server.protocol.merge import deep_merge
 from satellite_server.encryption.encrypted_store import EncryptedObjectStore
 from satellite_server.config.schema import (
     SyncConfig,
     CollectionConfig,
     RateLimitConfig,
     EncryptionMode,
+    RemoteConfig,
+    WildcardRemoteConfig,
+    WriteMode,
+    SyncTrigger,
 )
 from satellite_server.config.validate import validate_config
 from satellite_server.config.loader import load_config, save_config, parse_config_json, load_config_file
+from satellite_server.replica import (
+    ReplicaManager,
+    NotificationPublisher,
+    Subscription,
+    SubscriptionStore,
+    create_replica_router,
+)
+from satellite_server.storage.filesystem import FilesystemObjectStore, FilesystemStorageOptions
 
 __all__ = [
     "IObjectStore",
@@ -80,9 +93,20 @@ __all__ = [
     "CollectionConfig",
     "RateLimitConfig",
     "EncryptionMode",
+    "RemoteConfig",
+    "WildcardRemoteConfig",
+    "WriteMode",
+    "SyncTrigger",
     "validate_config",
     "load_config",
     "save_config",
     "parse_config_json",
     "load_config_file",
+    "ReplicaManager",
+    "NotificationPublisher",
+    "Subscription",
+    "SubscriptionStore",
+    "create_replica_router",
+    "FilesystemObjectStore",
+    "FilesystemStorageOptions",
 ]

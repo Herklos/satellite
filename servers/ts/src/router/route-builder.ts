@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import type { MiddlewareHandler, Context } from "hono"
 import type { IObjectStore } from "../interfaces.js"
 import type { SyncConfig, CollectionConfig } from "../config/schema.js"
+import type { ReplicaManager } from "../replica/manager.js"
 import { EncryptedObjectStore } from "../encryption/encrypted-store.js"
 import { pull } from "../protocol/index.js"
 import { handleSyncPull, handleSyncPush, validatePathSegment } from "./helpers.js"
@@ -50,6 +51,8 @@ export interface SyncRouterOptions {
   identityEncryptionInfo?: string
   serverEncryptionInfo?: string
   signatureVerifier?: SignatureVerifier
+  /** Enables the wildcard catch-all pull route when ``config.wildcardRemote`` is set. */
+  replicaManager?: ReplicaManager
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -320,6 +323,45 @@ function addBundledRoutes(router: Hono, bundleName: string, collections: Collect
   }
 }
 
+// ── Wildcard catch-all ────────────────────────────────────────────────────
+
+/**
+ * Register a low-priority ``GET /pull/*`` route that handles any path not
+ * matched by an explicit collection route.  Must be added *last* so Hono
+ * resolves explicit static routes first.
+ */
+function addWildcardPullRoute(router: Hono, opts: SyncRouterOptions): void {
+  const wc = opts.config.wildcardRemote!
+  const rm = opts.replicaManager!
+
+  router.get("/pull/*", async (c) => {
+    // c.req.param("*") gives everything after /pull/
+    const path = c.req.param("*") as string
+
+    if (!path || path.split("/").some(seg => !validatePathSegment(seg))) {
+      return c.json({ error: "Invalid path" }, 400)
+    }
+
+    // Replica-side auth gate
+    if (!wc.readRoles.includes(ROLE_PUBLIC)) {
+      let auth: AuthResult
+      try {
+        auth = await opts.roleResolver(c.req.raw)
+      } catch {
+        return c.json({ error: "Unauthorized" }, 401)
+      }
+      if (!wc.readRoles.some(r => auth.roles.includes(r))) {
+        return c.json({ error: "Forbidden" }, 403)
+      }
+    }
+
+    const found = await rm.onPullWildcard(path)
+    if (!found) return c.json({ error: "Not found" }, 404)
+
+    return handleSyncPull(c, path, opts.store, false, false)
+  })
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 export function createSyncRouter(opts: SyncRouterOptions): Hono {
@@ -346,6 +388,11 @@ export function createSyncRouter(opts: SyncRouterOptions): Hono {
 
   for (const [bundleName, collections] of bundles) {
     addBundledRoutes(router, bundleName, collections, opts)
+  }
+
+  // Wildcard catch-all must be registered last so explicit routes take priority
+  if (opts.config.wildcardRemote && opts.replicaManager) {
+    addWildcardPullRoute(router, opts)
   }
 
   return router

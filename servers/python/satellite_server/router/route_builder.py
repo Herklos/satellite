@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Callable, Awaitable
+
+import httpx
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from satellite_server.interfaces import IObjectStore
-from satellite_server.config.schema import SyncConfig, CollectionConfig
+from satellite_server.config.schema import SyncConfig, CollectionConfig, SyncTrigger, WildcardRemoteConfig, WriteMode
 from satellite_server.encryption.encrypted_store import EncryptedObjectStore
 from satellite_server.protocol.pull import pull
 from satellite_server.router.helpers import (
@@ -36,6 +39,10 @@ from satellite_server.constants import (
     HKDF_INFO_IDENTITY,
     HKDF_INFO_SERVER,
 )
+
+if TYPE_CHECKING:
+    from satellite_server.replica.manager import ReplicaManager
+    from satellite_server.replica.notifier import NotificationPublisher
 
 
 @dataclass
@@ -64,6 +71,10 @@ class SyncRouterOptions:
     identity_encryption_info: str | None = None
     server_encryption_info: str | None = None
     signature_verifier: SignatureVerifier | None = None
+    replica_manager: ReplicaManager | None = None
+    """Replica-side: enables ``on_pull`` sync trigger and ``write_through`` push proxying."""
+    notification_publisher: NotificationPublisher | None = None
+    """Primary-side: fan-out push notifications to subscribed replicas after each write."""
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -183,6 +194,53 @@ def _resolve_store(
     return base_store
 
 
+# ── Write-through proxy ───────────────────────────────────────────────────
+
+
+async def _proxy_push_to_primary(
+    col: CollectionConfig,
+    request: Request,
+    replica_manager: ReplicaManager,
+) -> JSONResponse:
+    """Forward a push request to the primary satellite server (write_through mode).
+
+    Returns the primary's response directly to the client, then triggers a
+    background sync so the local store is updated with the primary's final state.
+    """
+    remote = col.remote  # type: ignore[union-attr]
+    primary_url = f"{remote.url.rstrip('/')}{remote.push_path}"
+
+    raw_body = await request.body()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        **remote.headers,
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(primary_url, content=raw_body, headers=headers)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                {"error": f"Failed to reach primary: {exc}"},
+                status_code=502,
+            )
+
+    # Mirror the primary's status code to the client
+    if resp.status_code == 409:
+        return JSONResponse({"error": "hash_mismatch"}, status_code=409)
+    if not resp.is_success:
+        return JSONResponse(
+            {"error": f"Primary returned {resp.status_code}"},
+            status_code=resp.status_code,
+        )
+
+    # Sync local store from primary in background
+    asyncio.create_task(replica_manager.sync_now(col.name))
+
+    return JSONResponse(resp.json(), status_code=resp.status_code)
+
+
 # ── Route building ───────────────────────────────────────────────────────
 
 
@@ -203,6 +261,14 @@ def _add_collection_routes(
             identity, error = await _check_auth(col, OP_READ, request, params, opts)
             if error:
                 return error
+
+            # on_pull trigger: sync from primary before serving the local copy
+            if (
+                opts.replica_manager is not None
+                and col.remote is not None
+                and SyncTrigger.ON_PULL in col.remote.sync_triggers
+            ):
+                await opts.replica_manager.on_pull(col.name)
 
             document_key = _resolve_document_key(col.storage_path, params)
             store = _resolve_store(col, opts.store, params, identity, opts)
@@ -235,6 +301,21 @@ def _add_collection_routes(
             if error:
                 return error
 
+            # write_through: block local writes and proxy to primary instead
+            if (
+                col.remote is not None
+                and col.remote.write_mode == WriteMode.WRITE_THROUGH
+                and opts.replica_manager is not None
+            ):
+                return await _proxy_push_to_primary(col, request, opts.replica_manager)
+
+            # pull_only remote: reject local writes
+            if col.remote is not None and col.remote.write_mode == WriteMode.PULL_ONLY:
+                return JSONResponse(
+                    {"error": "This collection is read-only on this server"},
+                    status_code=405,
+                )
+
             # Body limit
             content_length = request.headers.get("content-length")
             limit_error = check_body_limit(content_length, col.max_body_bytes)
@@ -262,10 +343,22 @@ def _add_collection_routes(
             document_key = _resolve_document_key(col.storage_path, params)
             store = _resolve_store(col, opts.store, params, identity, opts)
             is_client_encrypted = bool(col.client_encrypted) or col.encryption == ENCRYPTION_DELEGATED
-            return await handle_sync_push(
+            response = await handle_sync_push(
                 document_key, store, body, identity,
                 opts.signature_verifier, is_client_encrypted,
             )
+
+            # Primary-side: notify subscribed replicas after a successful write
+            if opts.notification_publisher is not None and response.status_code == 200:
+                import json as _json
+                resp_body = _json.loads(response.body)
+                new_hash = resp_body.get("hash", "")
+                timestamp = resp_body.get("timestamp", 0)
+                asyncio.create_task(
+                    opts.notification_publisher.notify(col.name, new_hash, timestamp)
+                )
+
+            return response
 
         router.add_api_route(push_path, push_handler, methods=["POST"])
 
@@ -386,6 +479,49 @@ def _add_bundled_routes(
         router.add_api_route(push_path, bundle_push_handler, methods=["POST"])
 
 
+# ── Wildcard catch-all ────────────────────────────────────────────────────
+
+
+def _add_wildcard_pull_route(router: APIRouter, opts: SyncRouterOptions) -> None:
+    """Register a low-priority ``GET /pull/{path:path}`` route for wildcard replication.
+
+    This route is added *after* all explicit collection routes so FastAPI will only
+    invoke it for paths that did not match any configured collection.
+    """
+    wildcard: WildcardRemoteConfig = opts.config.wildcard_remote  # type: ignore[assignment]
+    replica_manager = opts.replica_manager
+
+    async def wildcard_pull_handler(request: Request) -> JSONResponse:
+        path: str = request.path_params.get("path", "")
+
+        # Validate every segment against the same safe-param regex used elsewhere
+        if not path or any(not validate_path_segment(seg) for seg in path.split("/")):
+            return JSONResponse({"error": "Invalid path"}, status_code=400)
+
+        # Replica-side auth gate
+        if ROLE_PUBLIC not in wildcard.read_roles:
+            try:
+                auth = await opts.role_resolver(request)
+            except Exception:
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            if not any(r in auth.roles for r in wildcard.read_roles):
+                return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+        # Fetch from primary (or serve cached / negative-cached)
+        if replica_manager is not None:
+            found = await replica_manager.on_pull_wildcard(path)
+            if not found:
+                return JSONResponse({"error": "Not found"}, status_code=404)
+
+        checkpoint_param = request.query_params.get(QUERY_CHECKPOINT)
+        return await handle_sync_pull(
+            path, opts.store, checkpoint_param,
+            force_full_fetch=False, is_client_encrypted=False,
+        )
+
+    router.add_api_route("/pull/{path:path}", wildcard_pull_handler, methods=["GET"])
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 
@@ -409,5 +545,9 @@ def create_sync_router(opts: SyncRouterOptions) -> APIRouter:
 
     for bundle_name, bundle_collections in bundles.items():
         _add_bundled_routes(router, bundle_name, bundle_collections, opts)
+
+    # Wildcard catch-all must be registered last so explicit routes take priority
+    if opts.config.wildcard_remote is not None and opts.replica_manager is not None:
+        _add_wildcard_pull_route(router, opts)
 
     return router
