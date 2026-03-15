@@ -55,6 +55,7 @@ export {
   CollectionConfigSchema,
   EncryptionModeSchema,
   RateLimitConfigSchema,
+  WildcardRemoteConfigSchema,
   loadConfig,
   saveConfig,
   validateConfig,
@@ -64,4 +65,8 @@ export type {
   CollectionConfig,
   EncryptionMode,
   RateLimitConfig,
+  WildcardRemoteConfig,
 } from "./config/index.js"
+
+// Replica
+export { ReplicaManager } from "./replica/index.js"
